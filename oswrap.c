@@ -1,5 +1,6 @@
 #include <string.h>
 #include "include/oswrap.h"
+#include <stdio.h>
 
 #ifdef _WIN32
 
@@ -24,10 +25,20 @@ int serial_params( char* params ) {
 	dcb.DCBlength = sizeof( DCB );
 
 	// Configure serial parameters
+	//printf( "BuildCommDCB\n" );
 	if( !BuildCommDCB( params, &dcb ) ) return( -1 );
+	//printf( "SetCommState\n" );
+	dcb.fOutxCtsFlow = 0;
+	dcb.fOutxDsrFlow = 0;
+	dcb.fDtrControl = 0;
+	dcb.fOutX = 0;
+	dcb.fInX = 0;
+	dcb.fRtsControl = 0;
+	
 	if( !SetCommState( h_serial, &dcb ) ) return( -1 );
 
 	// Configure buffers
+	//printf( "SetupComm\n" );
 	if( !SetupComm( h_serial,	1024,	1024) ) return( -1 );
 
 	// Configure timeouts	

@@ -71,9 +71,9 @@ void sam_open() {
   fmt.callback = sdl_mixer;
   fmt.userdata = NULL;
   if ( SDL_OpenAudio( &fmt, NULL ) < 0 ) {
-    printf( "SAM: Unable to open SDL audio\n" );
+    fprintf( stderr, "SAM [error]: Unable to open SDL audio\n" );
   }
-  printf( "SAM: Initialized\n" );
+  printf( "SAM [info]: Initialized\n" );
 }
 
 static void sam_play() {
@@ -110,7 +110,7 @@ void sam_queue( char* speak ) {
   memset( p_sam->phenomes, 0, 256 );
   strcpy( p_sam->phenomes, speak );
   sam_phenomes( p_sam->phenomes );
-  strcat( p_sam->phenomes, " \x9b\0" ); // Is this really necessary?
+  strcat( p_sam->phenomes, " \x9b\0" ); // TODO: is this really necessary?
 
  	// Queue push
 	p_sam->next = NULL;

@@ -67,10 +67,7 @@ extern "C" int cam_init( char *device, int fps, int *w, int *h ) {
     dev = atoi( device );
     // Initialize camera
     capture = cvCaptureFromCAM( dev );
-    if( !capture ) {
-      fprintf( stderr, "!!! Cannot open initialize webcam!\n" );
-      return( -1 );
-    }
+    if( !capture ) return( -1 );
 
     IplImage* img = 0;
     img = cvQueryFrame( capture );

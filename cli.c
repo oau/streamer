@@ -12,7 +12,9 @@
 #define MAX_NO_H264   125 // milliseconds/20
 #define KIWI_VERSION    2
 #define PORT         6979
-#define TIMEOUT_EXTRA  10 // milliseconds/20
+#define TIMEOUT_TRUST  10 // milliseconds/20
+
+#define FULLSCREEN      0 // start fullscreen
 
 enum state_e {
   STATE_CONNECTING,
@@ -22,6 +24,14 @@ enum state_e {
   STATE_LOST,
   STATE_VERSION,
   STATE_STREAMING
+};
+
+enum km_e {
+  KM_LEFT,
+  KM_RIGHT,
+  KM_UP,
+  KM_DOWN,
+  KM_SIZE
 };
 
 typedef struct {
@@ -35,16 +45,17 @@ static int port = PORT;
 
 static disp_data_t disp_data;
 static SDL_Surface *logo;
-static char text_contact[] =  "CONTACTING KIWIRAY...";
-static char text_error[]   =  "  CONNECTION ERROR!  ";
-static char text_queued[] =   " QUEUED FOR CONTROL! ";
-static char text_full[] =     "QUEUE IS FULL, SORRY!";
-static char text_lost[] =     "   CONNECTION LOST   ";
-static char text_quit[] =     "   PRESS Q TO QUIT   ";
-static char text_version[] =  "  NEED NEWER CLIENT  ";
-static char text_blank[] =    "                     ";
-static char text_time[] =     "       0:00:00       ";
-static char text_controls[] = "IN CONTROL - USE WASD+MOUSE";
+static SDL_Surface *help;
+static char text_contact[] =  "CONTACTING KIWIRAY1...";
+static char text_error[]   =  "   CONNECTION ERROR   ";
+static char text_queued[] =   "  QUEUED FOR CONTROL  ";
+static char text_full[] =     " QUEUE IS FULL, SORRY ";
+static char text_lost[] =     "  CONNECTION IS LOST  ";
+static char text_quit[] =     "   PRESS H FOR HELP   ";
+static char text_version[] =  " WRONG CLIENT VERSION ";
+static char text_blank[] =    "                      ";
+static char text_time[] =     "       00:00:00       ";
+static char text_controls[] = "IN CONTROL - PRESS H FOR HELP";
 static char text_timeout[] =  "TIME LEFT: 00:00";
 
 static char pkt_h264[ 4 ] = { 0x00, 0x00, 0x00, 0x01 };
@@ -56,151 +67,110 @@ static char pkt_lost[ 4 ] = "LOST";
 static char pkt_full[ 4 ] = "FULL";
 static char pkt_quit[ 4 ] = "QUIT";
 
-static SDL_Surface* screen;
-static NET_SOCK h_sock;
-static linked_buf_t *p_buffer_wr;
-static linked_buf_t *p_buffer_rd;
-static int volatile state = STATE_CONNECTING;
-static int volatile retry = 0;
-static int queue_time;
-linked_buf_t *extra_first = NULL;
-linked_buf_t *extra_last = NULL;
-unsigned char extra_id = 0;
-SDL_mutex *extra_mx;
+static   SDL_Surface *screen;                         // Screen surface
+static           int  screen_w, screen_h, screen_bpp; // Screen parameters
+static      NET_SOCK  h_sock;                         // Socket handle
+static  linked_buf_t *p_buffer_last;                  // Decoding buffer
+static  linked_buf_t *p_buffer_first;
+static volatile  int  state = STATE_CONNECTING;       // Client state
+static volatile  int  retry = 0;                      // Used for retransmissions and timeouts
+static           int  queue_time;                     // Time left before FUN
+static  linked_buf_t *trust_first = NULL;             // Non-lossy packet buffer
+static  linked_buf_t *trust_last = NULL;
+static unsigned char  trust_srv = 0xFF;               // Non-lossy transmission counters
+static unsigned char  trust_cli = 0x00;
+static     SDL_mutex *trust_mx;                       // Non-lossy buffer access mutex
+static           int  trust_timeout = 0;              // Non-lossy retransmission timeout
+static           int  b_cursor_grabbed;               // Is cursor currently "grabbed"?
 
-int extra_timeout = 0;
-
-static ctrl_data_t ctrl;
-
-void extradata( void* data, unsigned char size ) {
-  linked_buf_t *extra;
-  extra = malloc( sizeof( linked_buf_t ) );
-  
-  if( extra ) {
-
+// Queues a packet for trusted (non-lossy) transmission
+static void trust_queue( void* data, unsigned char size ) {
+  linked_buf_t *p_trust;
+  p_trust = malloc( sizeof( linked_buf_t ) );
+  if( p_trust ) {
     // Create packet
-    memcpy( extra->data, data, size );
-    extra->size = size;
-    extra->next = NULL;
-
+    memcpy( p_trust->data, data, size );
+    p_trust->size = size;
+    p_trust->next = NULL;
     // Insert into linked list
-    SDL_mutexP( extra_mx );
-    if( extra_first ) {
-      extra_last->next = extra;
+    SDL_mutexP( trust_mx );
+    if( trust_first ) {
+      trust_last->next = p_trust;
     } else {
-      extra_first = extra;
+      trust_first = p_trust;
     }
-    extra_last = extra;
-    SDL_mutexV( extra_mx );
+    trust_last = p_trust;
+    SDL_mutexV( trust_mx );
   }
 }
 
-char UnicodeChar( int uni ){
+// Handles trusted data packets
+void trust_handler( char* data, int size ) {
+  if( size == 0 ) return;
+  trust_srv++;
+  //data[ size ] = 0;
+  //term_write( 2, 10, data, 0 );
+}
+
+// Convert unicode to ascii - kind of a hack
+static char UnicodeChar( int uni ){
   #define INTERNATIONAL_MASK 0xFF80
   #define UNICODE_MASK       0x007F
-  
   if( uni == 0 ) return( 0 );
-  
   if( ( uni & INTERNATIONAL_MASK ) == 0 ) {
     return( ( char )( toupper( uni & UNICODE_MASK ) ) );
   } else {
     return( '?' );
   }
 }
-    
-void resource_init() {
+
+// Initialize graphical resources   
+static void resource_init() {
   SDL_Surface* temp;
   temp = SDL_LoadBMP( "logo.bmp" );
-  if( !temp ) printf( "Unable to load logo.bmp\n" );    
+  if( !temp ) printf( "KiwiDriveClient [error]: Unable to load logo.bmp\n" );
   logo = SDL_DisplayFormat( temp );
   SDL_FreeSurface( temp );
+  temp = SDL_LoadBMP( "help.bmp" );
+  if( !temp ) printf( "KiwiDriveClient [error]: Unable to load help.bmp\n" );
+  help = SDL_DisplayFormat( temp );
+  SDL_FreeSurface( temp );
+  SDL_SetColorKey( help, SDL_SRCCOLORKEY, SDL_MapRGB( screen->format, 0xFF, 0x00, 0xFF ) );
 }
 
-void resource_clean() {
+// Free graphical resources
+static void resource_clean() {
     SDL_FreeSurface( logo );
 }
 
-int receiver( void *unused ) {
-  int temp, size;
-  while( 1 ) {
-    temp = sizeof( srv_addr );
-    size = net_recv( &h_sock, p_buffer_wr->data, 32768, &srv_addr );
-    if( size >= 4 ) {
-      if( memcmp( p_buffer_wr->data, pkt_h264, 4 ) == 0 ) {
-        // h264 packet
-        state = STATE_STREAMING;
-        retry = 0;
-        p_buffer_wr->next = malloc( sizeof( linked_buf_t ) );
-        linked_buf_t *p_buf = p_buffer_wr;
-        p_buffer_wr = p_buffer_wr->next;
-        p_buffer_wr->size = 0;
-        p_buf->size = size;
-      } else if( memcmp( p_buffer_wr->data, pkt_data, 4 ) == 0 ) {
-        if( size >= 4 + sizeof( disp_data_t ) ) {
-          memcpy( &disp_data, p_buffer_wr->data + 4, sizeof( disp_data_t ) );
-          
-          SDL_mutexP( extra_mx );
-          if( extra_first ) {
-            if( disp_data.extra_id == extra_id ) {
-              linked_buf_t* p_extra = extra_first;
-              extra_first = extra_first->next;
-              extra_id++;
-              extra_timeout = 0;
-              free( p_extra );
-            }
-          }
-          SDL_mutexV( extra_mx );
-          
-        }
-      } else if( memcmp( p_buffer_wr->data, pkt_helo, 4 ) == 0 ) {
-        // HELO response
-        if( state == STATE_CONNECTING ) {
-          if( p_buffer_wr->data[ 4 ] != KIWI_VERSION ) {
-            state = STATE_VERSION;
-          } else {
-            state = STATE_QUEUED;
-            retry = 0;
-            queue_time = *( int* )&p_buffer_wr->data[ 5 ];
-          }
-        }
-      } else if( memcmp( p_buffer_wr->data, pkt_time, 4 ) == 0 ) {
-        // TIME response
-        if( state == STATE_QUEUED ) {
-          retry = 0;
-          queue_time = *( int* )&p_buffer_wr->data[ 4 ];
-        }
-      } else if( memcmp( p_buffer_wr->data, pkt_lost, 4 ) == 0 ) {
-        // Connection LOST response
-        state = STATE_LOST;
-      } else if( memcmp( p_buffer_wr->data, pkt_full, 4 ) == 0 ) {
-        // Queue FULL response
-        state = STATE_FULL;
-      }
-    }
-  }
-}
-
 // Used by DrawWuLine
-void DrawPixel( short x, short y, short c ) {
-	if( y > 479 ) return;
-	c = ~c;
-	Uint32 cv = SDL_MapRGB( screen->format, c, c, c );
-	( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) ) = cv;
+// TODO: alpha-blend correctly
+static void DrawPixel( short x, short y, Uint8 c ) {
+  Uint8 cr, cg, cb;
+  Uint32 cv;
+  if( y > 479 ) return;
+
+  cv = ( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) );
+  
+  SDL_GetRGB( cb, screen->format, &cr, &cg, &cb );
+  cr = ( ( ( int )cr * c ) >> 8 ) + ~c;
+  cg = ( ( ( int )cg * c ) >> 8 ) + ~c;
+  cb = ( ( ( int )cb * c ) >> 8 ) + ~c;
+  cv = SDL_MapRGB( screen->format, cr, cg, cb );
+  
+  ( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) ) = cv;
 }
 
 // Wu-Line implementation, courtesy of http://www.codeproject.com/KB/GDI/antialias.aspx
-void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
+static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
    unsigned short IntensityShift, ErrorAdj, ErrorAcc;
    unsigned short ErrorAccTemp, Weighting, WeightingComplementMask;
    short DeltaX, DeltaY, Temp, XDir;
-   
    SDL_LockSurface( screen );
-   
    // Locked parameters
    #define BaseColor 0
    #define NumLevels 256
    #define IntensityBits 8
-
    // Precomputing
    if( Y0 > Y1 ) {
       Temp = Y0; Y0 = Y1; Y1 = Temp;
@@ -212,10 +182,8 @@ void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
       XDir = -1;
       DeltaX = -DeltaX;
    }
-
-	 // Draw initial pixel   
+   // Draw initial pixel   
    DrawPixel( X0, Y0, BaseColor );
-
    // Draw horizontal, vertical, diagonal
    if( ( DeltaY = Y1 - Y0 ) == 0 ) {
       while( DeltaX-- != 0 ) {
@@ -234,79 +202,235 @@ void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
          DrawPixel( X0, Y0, BaseColor );
       } while ( --DeltaY != 0 );
    } else {
-   
-	   // Draw X/Y major
-	   ErrorAcc = 0;
-	   IntensityShift = 16 - IntensityBits;
-	   WeightingComplementMask = NumLevels - 1;
-	   if( DeltaY > DeltaX ) {
-	      ErrorAdj = ( ( unsigned long ) DeltaX << 16 ) / ( unsigned long ) DeltaY;
-	      while( --DeltaY ) {
-	         ErrorAccTemp = ErrorAcc;
-	         ErrorAcc += ErrorAdj;
-	         if( ErrorAcc <= ErrorAccTemp ) X0 += XDir;
-	         Y0++;
-	         Weighting = ErrorAcc >> IntensityShift;
-	         DrawPixel( X0, Y0, BaseColor + Weighting );
-	         DrawPixel( X0 + XDir, Y0, BaseColor + ( Weighting ^ WeightingComplementMask ) );
-	      }
-	   } else {
-		   ErrorAdj = ( ( unsigned long) DeltaY << 16) / (unsigned long) DeltaX;
-		   while( --DeltaX ) {
-		      ErrorAccTemp = ErrorAcc;
-		      ErrorAcc += ErrorAdj;
-		      if ( ErrorAcc <= ErrorAccTemp ) Y0++;
-		      X0 += XDir;
-		      Weighting = ErrorAcc >> IntensityShift;
-		      DrawPixel( X0, Y0, BaseColor + Weighting );
-		      DrawPixel( X0, Y0 + 1, BaseColor + ( Weighting ^ WeightingComplementMask ) );
-		   }
-		 }
-	   DrawPixel( X1, Y1, BaseColor );
-	 }
-	 
-	 SDL_UnlockSurface( screen );
+     // Draw X/Y major
+     ErrorAcc = 0;
+     IntensityShift = 16 - IntensityBits;
+     WeightingComplementMask = NumLevels - 1;
+     if( DeltaY > DeltaX ) {
+        ErrorAdj = ( ( unsigned long ) DeltaX << 16 ) / ( unsigned long ) DeltaY;
+        while( --DeltaY ) {
+           ErrorAccTemp = ErrorAcc;
+           ErrorAcc += ErrorAdj;
+           if( ErrorAcc <= ErrorAccTemp ) X0 += XDir;
+           Y0++;
+           Weighting = ErrorAcc >> IntensityShift;
+           DrawPixel( X0, Y0, BaseColor + Weighting );
+           DrawPixel( X0 + XDir, Y0, BaseColor + ( Weighting ^ WeightingComplementMask ) );
+        }
+     } else {
+       ErrorAdj = ( ( unsigned long) DeltaY << 16) / (unsigned long) DeltaX;
+       while( --DeltaX ) {
+          ErrorAccTemp = ErrorAcc;
+          ErrorAcc += ErrorAdj;
+          if ( ErrorAcc <= ErrorAccTemp ) Y0++;
+          X0 += XDir;
+          Weighting = ErrorAcc >> IntensityShift;
+          DrawPixel( X0, Y0, BaseColor + Weighting );
+          DrawPixel( X0, Y0 + 1, BaseColor + ( Weighting ^ WeightingComplementMask ) );
+       }
+     }
+     DrawPixel( X1, Y1, BaseColor );
+   }
+
+   SDL_UnlockSurface( screen );
 }
 
-//int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow ) {
+// Hide or show the cursor
+// Wrapper courtesy of Zoltan@forums.libsdl.org
+static void cursor_hide( int b_hide ) {
+  int x, y;
+  SDL_GetMouseState( &x, &y );
+  SDL_ShowCursor( b_hide ? SDL_DISABLE : SDL_ENABLE );
+  SDL_WarpMouse( x, y );
+}
+
+// Grab the cursor (locks cursor to our app)
+static void cursor_grab( int b_grab ) {
+  SDL_GrabMode ret; 
+  ret = SDL_WM_GrabInput( b_grab ? SDL_GRAB_ON : SDL_GRAB_OFF );
+  b_cursor_grabbed = ( ret & SDL_GRAB_ON ) != 0;
+  cursor_hide( b_cursor_grabbed );
+}
+
+// Poll cursor with warping support and grabbing detection
+// Adds any movement to incremental variables ix and iy
+static void cursor_poll( long *ix, long *iy ) {
+  static int ready = 0;
+  static int lx = 0, ly = 0;
+  int cx = 0, cy = 0;
+  int warp = 0;
+  if( !b_cursor_grabbed ) ready = 0;
+  SDL_GetMouseState( &cx, &cy );
+  if( ready ) {
+    *ix += cx - lx;
+    *iy += cy - ly;
+    if( cx > ( ( screen_w >> 1 ) + ( screen_w >> 2 ) )
+     || cx < ( ( screen_w >> 1 ) - ( screen_w >> 2 ) ) ) {
+      cx = screen_w >> 1;
+      warp = 1;
+    } 
+    if( cy > ( ( screen_h >> 1 ) + ( screen_h >> 2 ) )
+     || cy < ( ( screen_h >> 1 ) - ( screen_h >> 2 ) ) ) {
+      cy = screen_h >> 1;
+      warp = 1;
+    }
+    if( warp ) SDL_WarpMouse( cx, cy );
+  }
+  if( b_cursor_grabbed ) ready = 1;
+  lx = cx; ly = cy;
+}
+
+// Draws out the help screen
+void help_draw() {
+  term_write( 4, 11, "CONTROLS: WASD + MOUSE", 0 );
+  term_write( 4, 12, "L: TOGGLE QWERTY, DVORAK, AZERTY", 0 );
+  term_write( 4, 13, "H: SHOW/HIDE HELP", 0 );
+  term_write( 4, 14, "T: OPEN SPEECH/COMMAND PROMPT", 0 );
+  term_write( 4, 15, "F: TOGGLE FULL-SCREEN", 0 );
+  term_write( 4, 16, "   WHEN IN WINDOWED MODE, USED", 0 );
+  term_write( 4, 17, "   MOUSE-LEFT TO GRAB/UNGRAB", 0 );
+  term_write( 4, 18, "Q: QUIT", 0 );
+}
+
+// Clears the help screen
+void help_clear() {
+  int n;
+  for( n = 11; n <= 18; n++ ) term_white( 4, n, 32 );
+}
+
+// Thread handles reception of UDP packets
+static int receiver( void *unused ) {
+  int temp, size;
+  while( 1 ) {
+    temp = sizeof( srv_addr );
+    size = net_recv( &h_sock, p_buffer_last->data, 8192, &srv_addr );
+    if( size >= 4 ) {
+      
+      // H264
+      if( memcmp( p_buffer_last->data, pkt_h264, 4 ) == 0 ) {
+        // h264 packet
+        state = STATE_STREAMING;
+        retry = 0;
+        
+        // Push decoder buffer to queue
+        p_buffer_last->next = malloc( sizeof( linked_buf_t ) );
+        linked_buf_t *p_buf = p_buffer_last;
+        p_buffer_last = p_buffer_last->next;
+        p_buffer_last->size = 0;
+        p_buf->size = size;
+      
+      // DATA
+      } else if( memcmp( p_buffer_last->data, pkt_data, 4 ) == 0 ) {
+        if( size >= 4 + sizeof( disp_data_t ) ) {
+          memcpy( &disp_data, p_buffer_last->data + 4, sizeof( disp_data_t ) );
+
+          // Check if outgoing trusted data recieved, free trusted buffers
+          SDL_mutexP( trust_mx );
+          if( trust_first ) {
+            if( disp_data.trust_cli == trust_cli ) {
+              linked_buf_t* p_trust = trust_first;
+              trust_first = trust_first->next;
+              trust_cli++;
+              trust_timeout = 0;
+              free( p_trust );
+            }
+          }
+          SDL_mutexV( trust_mx );
+
+          // Handle incoming trusted data
+          if( ( ( trust_srv + 1 ) & 0xFF ) == disp_data.trust_srv ) {
+            trust_handler( p_buffer_last->data + 4 + sizeof( disp_data_t ), size - 4 - sizeof( disp_data_t ) );
+          }
+
+        }
+        
+      // HELO
+      } else if( memcmp( p_buffer_last->data, pkt_helo, 4 ) == 0 ) {
+        if( state == STATE_CONNECTING ) {
+          
+          // Go to queued only if version is correct
+          if( p_buffer_last->data[ 4 ] != KIWI_VERSION ) {
+            state = STATE_VERSION;
+          } else {
+            state = STATE_QUEUED;
+            retry = 0;
+            queue_time = *( int* )&p_buffer_last->data[ 5 ];
+          }
+        }
+        
+      // TIME
+      } else if( memcmp( p_buffer_last->data, pkt_time, 4 ) == 0 ) {
+        
+        // Update queue time
+        if( state == STATE_QUEUED ) {
+          retry = 0;
+          queue_time = *( int* )&p_buffer_last->data[ 4 ];
+        }
+        
+      // LOST
+      } else if( memcmp( p_buffer_last->data, pkt_lost, 4 ) == 0 ) {
+        
+        // Connection was lost (server don't know who we are)
+        state = STATE_LOST;
+        
+      // FULL
+      } else if( memcmp( p_buffer_last->data, pkt_full, 4 ) == 0 ) {
+        
+        // Connection could not be established (server queue is full)
+        state = STATE_FULL;
+        
+      }
+    }
+  }
+}
+
 int main( int argc, char *argv[] ) {
-  int                temp;
-  int                statec = 0;
-  int                laststate = -1;
-  char               text[ 256 ];
-  char               l_text = -1;
-  char               c_text;
-  char               p_ctrl[ 8192 ];
-  int                i_ctrl;
-  AVCodecContext    *pCodecCtx;
-  AVCodec           *pCodec;
-  AVFrame           *pFrame;
-  struct SwsContext *convertCtx;
-  AVPacket           avpkt;
-  SDL_Thread        *hReceiver;
-  SDL_Rect           dstrect;
-  SDL_Surface       *live = NULL;
-  char						  *p_vis;
-  Uint32 rmask, gmask, bmask, amask;
-  SDL_Event event;
-  int quit = 0;
-  int mx, my;
-  
-  printf( "KiwiRay Client Initializing...\n" );
+  int                temp;                       // Various uses
+  int                statec = 0;                 // State counter, used for retransmissions
+  int                laststate = -1;             // Used to detect state changes
+  char               p_text[ 256 ];              // Command text input
+  char               l_text = -1;                // Tracks size of p_text
+  char               c_text;                     // Used for unicode text input translation
+  char               p_ctrl[ 8192 ];             // CTRL packet buffer
+  int                i_ctrl;                     // Tracks size of p_ctrl
+  AVCodecContext    *pCodecCtx;                  // FFMPEG codec context
+  AVCodec           *pCodec;                     // Pointer to FFMPEG codec (H264)
+  AVFrame           *pFrame;                     // Used in the decoding process
+  struct SwsContext *convertCtx;                 // Used in the scaling/conversion process
+  AVPacket           avpkt;                      // Used in the decoding process
+  SDL_Thread        *hReceiver;                  // Thread handle to UDP receiver
+  SDL_Rect           rect;                       // Used for various graphics operations
+  SDL_Surface       *live = NULL;                // Live decoded video surface
+  char              *p_vis;                      // Pointer to SAM visualization data
+  int                b_fullscreen;               // Are we in fullscreen mode?
+  Uint32             rmask, gmask, bmask, amask; // Masking (endianness)
+  SDL_Event          event;                      // Events
+  int                quit = 0;                   // Time to quit?
+  ctrl_data_t        ctrl;                       // Part of CTRL packet
+  SDLKey             keymap[ KM_SIZE ];          // Keyboard remapping
+  int                b_help = 0;                 // Help is displayed?
+
+  printf( "KiwiDriveClient [info]: OHAI!\n" );
+
+  // TODO: remapping schemes for Dvorak (,AOE) and AZERTY (ZQSD)
+  keymap[ KM_LEFT ]  = SDLK_a;
+  keymap[ KM_RIGHT ] = SDLK_d;
+  keymap[ KM_UP ]    = SDLK_w;
+  keymap[ KM_DOWN ]  = SDLK_s;
 
   if( argc < 2 ) {
-    printf( "Need to specify IP-address on command-line\n" );
+    printf( "KiwiDriveClient [error]: Need to specify IP-address on command-line\n" );
     printf( "\n" );
     return( 1 );
   }
 
   if( net_init() < 0 ) {
-    printf( "Network initialization failed\n" );
+    printf( "KiwiDriveClient [error]: Network initialization failed\n" );
     return( 1 );
   }
 
   if( net_sock( &h_sock ) < 0 ) {
-    printf( "Socket aquire failed\n" );
+    printf( "KiwiDriveClient [error]: Socket aquire failed\n" );
     return( 1 );
   };
   
@@ -322,7 +446,7 @@ int main( int argc, char *argv[] ) {
   pCodec = avcodec_find_decoder( CODEC_ID_H264 );
   av_init_packet( &avpkt );
   if( !pCodec ) {
-    printf( "Unable to initialize decoder\n" );
+    printf( "KiwiDriveClient [error]: Unable to initialize decoder\n" );
     return( 5 );
   }
   avcodec_open( pCodecCtx, pCodec );  
@@ -332,8 +456,15 @@ int main( int argc, char *argv[] ) {
 
   SDL_Init( SDL_INIT_VIDEO | SDL_INIT_AUDIO );
   SDL_WM_SetCaption( "KiwiRay Client", "KiwiRay Client" );
-  screen = SDL_SetVideoMode( 640, 480, 32, 0 ); //SDL_FULLSCREEN );
   
+  b_fullscreen = FULLSCREEN;
+  screen_w = 640;
+  screen_h = 480;
+  screen_bpp = 32;
+  screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( b_fullscreen ? SDL_FULLSCREEN : 0 ) );
+  // TODO: need check if fullscreen was possible?
+  cursor_grab( b_fullscreen );
+
   SDL_EnableUNICODE( SDL_ENABLE );
   SDL_EnableKeyRepeat( 400, 50 );
 
@@ -355,49 +486,42 @@ int main( int argc, char *argv[] ) {
   SDL_Surface* frame = SDL_CreateRGBSurface( SDL_SWSURFACE, 640, 480, 24, 0, 0, 0, 0 );
 
   if( !frame ) {
-    printf( "Unable to allcate SDL surface\n" );
+    printf( "KiwiDriveClient [error]: Unable to allcate SDL surface\n" );
     return( 1 );
   }
   
-  p_buffer_wr = malloc( sizeof( linked_buf_t ) );;
-  p_buffer_rd = p_buffer_wr;
-  p_buffer_wr->size = 0;
+  p_buffer_last = malloc( sizeof( linked_buf_t ) );;
+  p_buffer_first = p_buffer_last;
+  p_buffer_last->size = 0;
   
   sam_open();
   
-  extra_mx = SDL_CreateMutex();
-  
+  trust_mx = SDL_CreateMutex();
+
+  // Create receiving thread
   hReceiver = SDL_CreateThread( receiver, NULL );
   
   while( !quit ) {
-    
-    sam_poll();
 
-    SDL_GetRelativeMouseState( &mx, &my );
-    SDL_WarpMouse( 320, 240 );
-    ctrl.ctrl_mx += mx;
-    ctrl.ctrl_my += my;
-    
+    sam_poll();
+    cursor_poll( &ctrl.ctrl.mx, &ctrl.ctrl.my );
+
+    /*
+    // Debug print cursor
     char xxx[ 100 ];
-    sprintf( xxx, "%i, %i        ", ctrl.ctrl_mx, ctrl.ctrl_my );
+    sprintf( xxx, "%i, %i        ", ctrl.ctrl.mx, ctrl.ctrl.my );
     term_write( 1, 10, xxx, 1 );
+    */
 
     if( state != laststate ) {
+      if( state == STATE_STREAMING ) ctrl.ctrl.kb = 0;
       l_text = -1;
       term_crem();
       laststate = state;
-      // Clear screen
-      dstrect.x = 0;
-      dstrect.y = 0;
-      dstrect.w = 640;
-      dstrect.h = 480;
-      SDL_FillRect( screen, &dstrect, 0 );
       term_clear();
+      if( b_help ) help_draw();
       // Initialize view
       if( state != STATE_STREAMING ) {
-        dstrect.x = 170;
-        dstrect.y = 60;
-        SDL_BlitSurface( logo, NULL, screen, &dstrect );
         switch( state ) {
           case STATE_CONNECTING:
             term_write( 9, 24, text_contact, 0 );
@@ -428,60 +552,64 @@ int main( int argc, char *argv[] ) {
     }
 
     if( state == STATE_STREAMING ) {
+
       // Connected & streaming, buld CTRL packet
-      
       memcpy( p_ctrl, pkt_ctrl, 4 );
       i_ctrl = 4;
-      
+      ctrl.trust_cli = trust_cli;
+      ctrl.trust_srv = trust_srv;
       memcpy( p_ctrl + 4, &ctrl, sizeof( ctrl_data_t ) );
       i_ctrl += sizeof( ctrl_data_t );
 
-      SDL_mutexP( extra_mx );
-      if( extra_timeout == 0 ) {
-        // Extra information?
-        if( extra_first ) {
-          // Identifier
-          p_ctrl[ i_ctrl++ ] = extra_id;
-          // Data
-          memcpy( p_ctrl + i_ctrl, extra_first->data, extra_first->size );
-          i_ctrl += extra_first->size;
-          extra_timeout = TIMEOUT_EXTRA;
+      // Append trusted data if any
+      SDL_mutexP( trust_mx );
+      if( trust_timeout == 0 ) {
+        if( trust_first ) {
+          memcpy( p_ctrl + i_ctrl, trust_first->data, trust_first->size );
+          i_ctrl += trust_first->size;
+          trust_timeout = TIMEOUT_TRUST;
         }
       } else {
-        extra_timeout--;
+        trust_timeout--;
       }
-      SDL_mutexV( extra_mx );
-    
+      SDL_mutexV( trust_mx );
+
+      // Send CTRL packet
       net_send( &h_sock, p_ctrl, i_ctrl, &srv_addr );
       if( ++retry == MAX_NO_H264 ) state = STATE_LOST;
       
-      if( p_buffer_rd->size ) {
+      if( p_buffer_first->size ) {
 
         // Decode frame
-        avpkt.data = p_buffer_rd->data;
-        avpkt.size = p_buffer_rd->size;
+        avpkt.data = p_buffer_first->data;
+        avpkt.size = p_buffer_first->size;
         avpkt.flags = AV_PKT_FLAG_KEY;
         if( avcodec_decode_video2( pCodecCtx, pFrame, &temp, &avpkt ) < 0 ) {
-          printf( "Decoding error\n" );
+          printf( "KiwiDriveClient [info]: Decoding error (packet loss)\n" );
         } else {
           SDL_LockSurface( frame );      
 
           const uint8_t * data[1] = { frame->pixels };
           int linesize[1] = { frame->pitch };
 
+          // Create scaling & color-space conversion context
           convertCtx = sws_getContext( pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt,
             frame->w, frame->h, PIX_FMT_BGR24, SWS_AREA, NULL, NULL, NULL);
 
+          // Scale and convert the frame
           sws_scale( convertCtx, (const uint8_t**) pFrame->data, pFrame->linesize, 0,
             pCodecCtx->height, (uint8_t * const*) data, linesize );
 
+          // Cleanup
           sws_freeContext( convertCtx );
 
           SDL_UnlockSurface( frame );
           
+          // Convert to display format for fast blitting
           if( live ) SDL_FreeSurface( live );
           live = SDL_DisplayFormat( frame );
     
+          // Update control timer
           temp = disp_data.timer / 25;
           text_timeout[ 15 ] = '0' + ( ( temp % 60 ) % 10 );
           text_timeout[ 14 ] = '0' + ( ( temp % 60 ) / 10 );
@@ -490,38 +618,49 @@ int main( int argc, char *argv[] ) {
           text_timeout[ 11 ] = '0' + ( ( temp % 60 ) / 10 );
           term_write( 1, 1, text_controls, 0 );
           term_write( 1, 2, text_timeout, 0 );
-          
         }
-        linked_buf_t *p_buf = p_buffer_rd;
-        p_buffer_rd = p_buffer_rd->next;
+
+        // Pop decoding buffer from queue
+        linked_buf_t *p_buf = p_buffer_first;
+        p_buffer_first = p_buffer_first->next;
         free( p_buf );
         
       }
       
       if( live ) {
-      	// Draw video
-      	SDL_BlitSurface( live, NULL, screen, NULL );
+        // Draw video
+        SDL_BlitSurface( live, NULL, screen, NULL );
       } else {
-	      // Clear screen
-	      dstrect.x = 0;
-	      dstrect.y = 0;
-	      dstrect.w = 640;
-	      dstrect.h = 480;
-	      SDL_FillRect( screen, &dstrect, 0 );
+        // Clear screen
+        rect.x = 0;
+        rect.y = 0;
+        rect.w = 640;
+        rect.h = 480;
+        SDL_FillRect( screen, &rect, 0 );
       }
       
       if( sam_vis( &p_vis ) == 0 ) {
-      	// TODO: draw visualization
-      	for( temp = 0; temp < 636; temp += 4 ) {
-      		DrawWuLine( temp, 440 + p_vis[ temp ], temp + 4, 440 + ( p_vis[ temp + 4 ] ) );
-      	}
-      	DrawWuLine( temp, 440 + p_vis[ temp ], temp + 3, 440 + ( p_vis[ temp + 3 ] ) );
+        for( temp = 0; temp < 636; temp += 4 ) {
+          DrawWuLine( temp, 440 + p_vis[ temp ], temp + 4, 440 + ( p_vis[ temp + 4 ] ) );
+        }
+        DrawWuLine( temp, 440 + p_vis[ temp ], temp + 3, 440 + ( p_vis[ temp + 3 ] ) );
       }
 
     } else {      
 
+      // Clear screen
+      rect.x = 0;
+      rect.y = 0;
+      rect.w = 640;
+      rect.h = 480;
+      SDL_FillRect( screen, &rect, 0 );
+      // Draw logo
+      rect.x = 170;
+      rect.y = 60;
+      SDL_BlitSurface( logo, NULL, screen, &rect );
+
       switch( state ) {
-        case STATE_CONNECTING: // connecting
+        case STATE_CONNECTING:
           if( statec == 0 ) {
             if( ++retry == MAX_RETRY ) {
               state = STATE_ERROR;
@@ -530,7 +669,9 @@ int main( int argc, char *argv[] ) {
             }
           }
           break;
-        case STATE_QUEUED: // queued
+        case STATE_QUEUED:
+
+          // Draw queue time
           temp = queue_time / 25;
           text_time[ 13 ] = '0' + ( ( temp % 60 ) % 10 );
           text_time[ 12 ] = '0' + ( ( temp % 60 ) / 10 );
@@ -553,46 +694,72 @@ int main( int argc, char *argv[] ) {
     
     }
 
+    // Draw help overlay
+    if( b_help ) {
+      rect.x = 48;
+      rect.y = 160;
+      rect.w = help->w;
+      rect.h = help->h;
+      SDL_BlitSurface( help, NULL, screen, &rect );
+    }
+    
+    // Draw terminal overlay
     term_draw();
 
+    // Refresh screen
     SDL_UpdateRect( screen, 0, 0, 0, 0 );
-    
+
     while( SDL_PollEvent( &event ) && !quit ) {
       switch( event.type ) {
         case SDL_QUIT:
+          // Set time to quit
           quit = 1;
           break;
+          
+        case SDL_MOUSEBUTTONDOWN:
+          // Toggle cursor grabbing
+          if( event.button.button == SDL_BUTTON_LEFT && !b_fullscreen ) {
+            cursor_grab( !b_cursor_grabbed );
+          }
+          break;
+          
         case SDL_KEYDOWN:
           if( l_text >= 0 ) {
             switch( event.key.keysym.sym ) {
               case SDLK_RETURN:
                 if( l_text > 0 ) {
                   // Send to server
-                  memset( text + strlen( text ), 0, 255 - strlen( text ) );
-                  extradata( text, strlen( text ) );
+                  memset( p_text + strlen( p_text ), 0, 255 - strlen( p_text ) );
+                  trust_queue( p_text, strlen( p_text ) );
                   // Queue for local playback
-                  sam_queue( text );
+                  sam_queue( p_text );
                 }
-                	
+                //...
+
               case SDLK_ESCAPE:
+                // Abort text input
                 l_text = -1;
-                text[ l_text ] = 0;
+                p_text[ l_text ] = 0;
                 term_white( 1, 28, 38 );
                 term_crem();
                 break;
+                
               case SDLK_BACKSPACE:
+                // Remove last character
                 if( l_text > 0 ) {
-                  text[ --l_text ] = 0;
+                  p_text[ --l_text ] = 0;
                   term_white( l_text + 2, 28, 1 );
                   term_cins( l_text + 2, 28 );
                 }
                 break;
+                
               default:
+                // Attempt to insert character
                 c_text = UnicodeChar( event.key.keysym.unicode );
                 if( term_knows( c_text ) && l_text < 37 ) {
-                  text[ l_text++ ] = c_text;
-                  text[ l_text ] = 0;
-                  term_write( l_text + 1, 28, &text[ l_text - 1 ], 0 );
+                  p_text[ l_text++ ] = c_text;
+                  p_text[ l_text ] = 0;
+                  term_write( l_text + 1, 28, &p_text[ l_text - 1 ], 0 );
                   term_cins( l_text + 2, 28 );
                 }
                 
@@ -600,58 +767,88 @@ int main( int argc, char *argv[] ) {
           } else {
             switch( event.key.keysym.sym ) {
               case SDLK_q:
+                // Set quit
                 quit = 1;
                 break;
+                
+              case SDLK_f:
+                // Toggle fullscreen
+                b_fullscreen = !b_fullscreen;
+                screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( b_fullscreen ? SDL_FULLSCREEN : 0 ) );
+                // TODO: need check if fullscreen was possible?
+                cursor_grab( b_fullscreen );
+                laststate = -1;
+                break;
+
               case SDLK_t:
+                // Begin text input
                 if( state == STATE_STREAMING ) {
                   l_text = 0;
-                  text[ 0 ] = 0x00;
+                  p_text[ 0 ] = 0x00;
                   term_write( 1, 28, ">", 0 );
                   term_cins( 2, 28 );
-                  ctrl.ctrl_kb = 0;
+                  ctrl.ctrl.kb = 0;
                 }
                 break;
-              case SDLK_a:
-                ctrl.ctrl_kb |= KB_LEFT;
+                
+              case SDLK_h:
+                // Toggle help
+                b_help = !b_help;
+                if( b_help ) {
+                  help_draw();
+                } else {
+                  help_clear();
+                }
+
+              default:
+                // WASD control scheme
+                if( event.key.keysym.sym == keymap[ KM_LEFT ] ) {
+                  ctrl.ctrl.kb |= KB_LEFT;
+                } else if( event.key.keysym.sym == keymap[ KM_RIGHT ] ) {
+                  ctrl.ctrl.kb |= KB_RIGHT;
+                } else if( event.key.keysym.sym == keymap[ KM_UP ] ) {
+                  ctrl.ctrl.kb |= KB_UP;
+                } else if( event.key.keysym.sym == keymap[ KM_DOWN ] ) {
+                  ctrl.ctrl.kb |= KB_DOWN;
+                }
                 break;
-              case SDLK_d:
-                ctrl.ctrl_kb |= KB_RIGHT;
-                break;
-              case SDLK_w:
-                ctrl.ctrl_kb |= KB_UP;
-                break;
-              case SDLK_s:
-                ctrl.ctrl_kb |= KB_DOWN;
-                break;
+
             }
           }
           break;
         case SDL_KEYUP:
+          // WASD control scheme
           switch( event.key.keysym.sym ) {
             case SDLK_a:
-              ctrl.ctrl_kb &= ~KB_LEFT;
+              ctrl.ctrl.kb &= ~KB_LEFT;
               break;
             case SDLK_d:
-              ctrl.ctrl_kb &= ~KB_RIGHT;
+              ctrl.ctrl.kb &= ~KB_RIGHT;
               break;
             case SDLK_w:
-              ctrl.ctrl_kb &= ~KB_UP;
+              ctrl.ctrl.kb &= ~KB_UP;
               break;
             case SDLK_s:
-              ctrl.ctrl_kb &= ~KB_DOWN;
+              ctrl.ctrl.kb &= ~KB_DOWN;
               break;
           }
           break;
       }
     }
 
-  	SDL_Delay( 20 );  
+    SDL_Delay( 20 );  
   }
+
+  // Send QUIT
   net_send( &h_sock, pkt_quit, 4, &srv_addr );
 
+  // Clean up
   resource_clean();
   avcodec_close( pCodecCtx );
-  SDL_DestroyMutex( extra_mx );
+  SDL_DestroyMutex( trust_mx );
   SDL_FreeSurface( frame );
   SDL_Quit();
+
+  printf( "KiwiDriveClient [info]: KTHXBYE!\n" );
+
 }

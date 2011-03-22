@@ -36,12 +36,12 @@ void term_init( SDL_Surface *scr ) {
   screen = scr;
 
   temp = SDL_LoadBMP( "font1.bmp" );
-  if( !temp ) printf( "Unable to load font1.bmp\n" );
+  if( !temp ) printf( "KiwiDriveClient [error]: Unable to load font1.bmp\n" );
   font[ 0 ] = SDL_DisplayFormat( temp );
   SDL_FreeSurface( temp );
   
   temp = SDL_LoadBMP( "font2.bmp" );
-  if( !temp ) printf( "Unable to load font2.bmp\n" );
+  if( !temp ) printf( "KiwiDriveClient [error]: Unable to load font2.bmp\n" );
   font[ 1 ] = SDL_DisplayFormat( temp );
   SDL_FreeSurface( temp );
   
@@ -98,12 +98,12 @@ void term_write( unsigned char x, unsigned char y, char *s, unsigned char f ) {
         if( term[ x ][ y ].nchar != j || term[ x ][ y ].nfont != f ) {
           term[ x ][ y ].nchar = j;
           term[ x ][ y ].nfont = f;
-          if( t == 0 ) {
+          if( t == 0 && write_index == 0 ) {
             term[ x ][ y ].cchar = j;
             term[ x ][ y ].cfont = f;
             term[ x ][ y ].tick = 0;
           } else {
-            term[ x ][ y ].tick = -( t + write_index * 10 );
+            term[ x ][ y ].tick = -( t + write_index * 5 );
           }
           t++;
         }
