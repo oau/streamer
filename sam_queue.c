@@ -1,7 +1,7 @@
 #include <SDL/SDL.h>
 #include "include/sam/sam.h"
 
-#define VIS_SIZE 640
+#define VIS_SIZE 1024
 
 struct sam_list_t {
 	char phenomes[ 256 ];

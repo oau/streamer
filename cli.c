@@ -67,21 +67,22 @@ static char pkt_lost[ 4 ] = "LOST";
 static char pkt_full[ 4 ] = "FULL";
 static char pkt_quit[ 4 ] = "QUIT";
 
-static   SDL_Surface *screen;                         // Screen surface
-static           int  screen_w, screen_h, screen_bpp; // Screen parameters
-static      NET_SOCK  h_sock;                         // Socket handle
-static  linked_buf_t *p_buffer_last;                  // Decoding buffer
+static   SDL_Surface *screen;                          // Screen surface
+static           int  screen_w, screen_h, screen_bpp;  // Screen parameters
+static      NET_SOCK  h_sock;                          // Socket handle
+static  linked_buf_t *p_buffer_last;                   // Decoding buffer
 static  linked_buf_t *p_buffer_first;
-static volatile  int  state = STATE_CONNECTING;       // Client state
-static volatile  int  retry = 0;                      // Used for retransmissions and timeouts
-static           int  queue_time;                     // Time left before FUN
-static  linked_buf_t *trust_first = NULL;             // Non-lossy packet buffer
+static volatile  int  state = STATE_CONNECTING;        // Client state
+static volatile  int  retry = 0;                       // Used for retransmissions and timeouts
+static           int  queue_time;                      // Time left before FUN
+static  linked_buf_t *trust_first = NULL;              // Non-lossy packet buffer
 static  linked_buf_t *trust_last = NULL;
-static unsigned char  trust_srv = 0xFF;               // Non-lossy transmission counters
+static unsigned char  trust_srv = 0xFF;                // Non-lossy transmission counters
 static unsigned char  trust_cli = 0x00;
-static     SDL_mutex *trust_mx;                       // Non-lossy buffer access mutex
-static           int  trust_timeout = 0;              // Non-lossy retransmission timeout
-static           int  b_cursor_grabbed;               // Is cursor currently "grabbed"?
+static     SDL_mutex *trust_mx;                        // Non-lossy buffer access mutex
+static           int  trust_timeout = 0;               // Non-lossy retransmission timeout
+static           int  b_cursor_grabbed;                // Is cursor currently "grabbed"?
+static         Uint8  draw_red, draw_green, draw_blue; // Drawing color
 
 // Queues a packet for trusted (non-lossy) transmission
 static void trust_queue( void* data, unsigned char size ) {
@@ -143,19 +144,24 @@ static void resource_clean() {
     SDL_FreeSurface( logo );
 }
 
+static void SetColor( Uint8 red, Uint8 green, Uint8 blue ) {
+  draw_red = red;
+  draw_green = green;
+  draw_blue = blue;
+}
+
 // Used by DrawWuLine
-// TODO: alpha-blend correctly
-static void DrawPixel( short x, short y, Uint8 c ) {
+static void DrawPixel( short x, short y, Uint8 a ) {
   Uint8 cr, cg, cb;
   Uint32 cv;
-  if( y > 479 ) return;
+  if( y > 479 || x < 0 || x > 639 ) return;
 
   cv = ( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) );
   
-  SDL_GetRGB( cb, screen->format, &cr, &cg, &cb );
-  cr = ( ( ( int )cr * c ) >> 8 ) + ~c;
-  cg = ( ( ( int )cg * c ) >> 8 ) + ~c;
-  cb = ( ( ( int )cb * c ) >> 8 ) + ~c;
+  SDL_GetRGB( cv, screen->format, &cr, &cg, &cb );
+  cr = ( ( ( int )cr * a ) + ( ( int )draw_red   * ( 255 - a ) ) ) >> 8;
+  cg = ( ( ( int )cg * a ) + ( ( int )draw_green * ( 255 - a ) ) ) >> 8;
+  cb = ( ( ( int )cb * a ) + ( ( int )draw_blue  * ( 255 - a ) ) ) >> 8;
   cv = SDL_MapRGB( screen->format, cr, cg, cb );
   
   ( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) ) = cv;
@@ -641,6 +647,25 @@ int main( int argc, char *argv[] ) {
       
       if( sam_vis( &p_vis ) == 0 ) {
         for( temp = 0; temp < 636; temp += 4 ) {
+          SetColor( 0x3F, 0x00, 0x3F );
+          DrawWuLine( temp + 1, 441 + p_vis[ temp ], temp + 5, 441 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp - 1, 439 + p_vis[ temp ], temp + 3, 439 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp + 1, 439 + p_vis[ temp ], temp + 5, 439 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp - 1, 441 + p_vis[ temp ], temp + 3, 441 + ( p_vis[ temp + 4 ] ) );
+          SetColor( 0x00, 0x00, 0x00 );
+          DrawWuLine( temp + 2, 442 + p_vis[ temp ], temp + 6, 442 + ( p_vis[ temp + 4 ] ) );
+        }
+        SetColor( 0x3F, 0x00, 0x3F );
+        DrawWuLine( temp + 1, 441 + p_vis[ temp ], temp + 4, 441 + ( p_vis[ temp + 3 ] ) );
+        DrawWuLine( temp - 1, 439 + p_vis[ temp ], temp + 2, 439 + ( p_vis[ temp + 3 ] ) );
+        DrawWuLine( temp + 1, 439 + p_vis[ temp ], temp + 4, 439 + ( p_vis[ temp + 3 ] ) );
+        DrawWuLine( temp - 1, 441 + p_vis[ temp ], temp + 2, 441 + ( p_vis[ temp + 3 ] ) );
+        SetColor( 0x00, 0x00, 0x00 );
+        DrawWuLine( temp + 2, 442 + p_vis[ temp ], temp + 5, 442 + ( p_vis[ temp + 3 ] ) );
+
+        
+        SetColor( 0x3F, 0xFF, 0x3F );
+        for( temp = 0; temp < 636; temp += 4 ) {
           DrawWuLine( temp, 440 + p_vis[ temp ], temp + 4, 440 + ( p_vis[ temp + 4 ] ) );
         }
         DrawWuLine( temp, 440 + p_vis[ temp ], temp + 3, 440 + ( p_vis[ temp + 3 ] ) );
@@ -673,13 +698,15 @@ int main( int argc, char *argv[] ) {
 
           // Draw queue time
           temp = queue_time / 25;
-          text_time[ 13 ] = '0' + ( ( temp % 60 ) % 10 );
-          text_time[ 12 ] = '0' + ( ( temp % 60 ) / 10 );
+
+          text_time[ 14 ] = '0' + ( ( temp % 60 ) % 10 );
+          text_time[ 13 ] = '0' + ( ( temp % 60 ) / 10 );
           temp /= 60;
-          text_time[ 10 ] = '0' + ( ( temp % 60 ) % 10 );
-          text_time[  9 ] = '0' + ( ( temp % 60 ) / 10 );
+          text_time[ 11 ] = '0' + ( ( temp % 60 ) % 10 );
+          text_time[ 10 ] = '0' + ( ( temp % 60 ) / 10 );
           temp /= 60;
-          text_time[  7 ] = '0' + temp;
+          text_time[  8 ] = '0' + ( temp % 10 );
+          text_time[  7 ] = '0' + ( temp / 10 );
           term_write( 9, 25, text_time, 0 );
           if( statec == 0 ) {
             if( ++retry == MAX_RETRY ) {

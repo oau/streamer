@@ -19,6 +19,9 @@
 // Audio
 //#define DISABLE_SPEECH          // Disables SAM
 
+// Save the stream
+//#define SAVE_STREAM           "server.h264"
+
 // Movement
 #define ROT_DZN               0 // Dead-zone
 #define ROT_ACC              10 // Acceleration
@@ -136,6 +139,9 @@ SDL_Thread    *hKiwiray;
 // Serial
 static char *p_serdev = NULL;
 
+// Emoticons
+static unsigned char emoticon;
+
 // Queues a packet for trusted (non-lossy) transmission
 static void trust_queue( void* data, unsigned char size ) {
   linked_buf_t *p_trust;
@@ -159,11 +165,26 @@ static void trust_queue( void* data, unsigned char size ) {
 
 // Handles trusted data packets
 void trust_handler( client_t *p_client, char* data, int size ) {
+  unsigned char n;
   if( size == 0 ) return;
   data[ size ] = 0;
   p_client->trust_cli++;
   printf( "KiwiRayServer [info]: Client %i says: %s\n", p_client->index, data );  
-  trust_queue( data, size ); // TODO: remove
+  //trust_queue( data, size ); // TODO: remove
+  for( n = 0; n < size - 1; n++ ) {
+    if( data[ n ] == ':' ) {
+      switch( data[ n + 1 ] ) {
+        case ')':
+          emoticon = 2;
+          break;
+        case '(':
+          emoticon = 3;
+          break;
+      }
+      data[ n ] = ' ';
+      data[ n + 1 ] = ' ';
+    }
+  }
 #ifndef DISABLE_SPEECH
   sam_queue( data );
 #endif
@@ -235,6 +256,7 @@ static client_t *clients_add( NET_ADDR *client ) {
         do_intra = 1; // Intra-refresh needed
         trust_clear();
         client_first = &clients[ n ];
+        emoticon = 1;
       }
       client_last = &clients[ n ];
       p_ret = &clients[ n ];
@@ -287,11 +309,13 @@ static void clients_tick() {
     	// Time for client switch
       printf( "KiwiRayServer [info]: Client %i disconnected (time up)\n", client_first->index );
       client_first = client_first->next;
+    	emoticon = 0;
       if( client_first ) {
+        emoticon = 1;
       	client_first->prev = NULL;
 	      do_intra = 1; // Intra-refresh needed
-	      trust_clear();
       }
+	    trust_clear();
     }    
   }
   SDL_mutexV( client_mx );
@@ -300,7 +324,48 @@ static void clients_tick() {
 // Thread handles KiwiRay communications
 int kiwiray( void *unused ) {
   int b_working = 0;
-  char p_pkt[] = {  0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 };
+  unsigned char n;
+  unsigned char emotilast = 255;
+  char p_pkt[ 64 ] = {  0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 };
+  const unsigned char emotidata[ 4 ][ 24 ] = {
+    {
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00011000, 0b00000000,
+      0b00000000, 0b00011000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000
+    }, {
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00111100, 0b00111100, 0b00111100,
+      0b00100100, 0b00100100, 0b00100100,
+      0b00100100, 0b00100100, 0b00100100,
+      0b00111100, 0b00111100, 0b00111100,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000
+    }, {
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b11100111, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b10000001, 0b00000000,
+      0b00000000, 0b01000010, 0b00000000,
+      0b00000000, 0b00111100, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000
+    }, {
+      0b00000000, 0b00000000, 0b00000000,
+      0b01000010, 0b00000000, 0b00000000,
+      0b00100100, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000,
+      0b00111100, 0b00000000, 0b00000000,
+      0b01000010, 0b00000000, 0b00000000,
+      0b00000000, 0b00000000, 0b00000000
+    }
+  };
 
   // Initial serial startup
   b_working = ( serial_open( p_serdev ) == 0 );
@@ -323,22 +388,34 @@ int kiwiray( void *unused ) {
       b_working = ( serial_open( p_serdev ) == 0 );
       if( b_working ) b_working = serial_params( "115200,n,8,1" );
     }
-    p_pkt[ 5 ] = -drive_x;           // Strafe X
-    p_pkt[ 4 ] = -drive_y;           // Move   Y
-    p_pkt[ 3 ] =  drive_r;           // Rotate R
-    p_pkt[ 2 ] =  drive_p * CAM_SEN; // Look   Pitch
-    if( b_working) b_working = ( serial_write( p_pkt, sizeof( p_pkt ) ) == sizeof( p_pkt ) );    
+    p_pkt[ 1 ] = 0x00;               // Drive XYZ
+    p_pkt[ 2 ] = -drive_x;           // Strafe X
+    p_pkt[ 3 ] = -drive_y;           // Move   Y
+    p_pkt[ 4 ] =  drive_r;           // Rotate R
+    p_pkt[ 5 ] =  drive_p * CAM_SEN; // Look   Pitch
+    p_pkt[ 6 ] =  6;                 // Stepsize = 1:2^6
+    if( b_working) b_working = ( serial_write( p_pkt, 7 ) == 7 );
+    if( emotilast != emoticon ) {
+      p_pkt[ 1 ] = 0x33;             // Display
+      p_pkt[ 2 ] = 24;               // 8x8x3 bits
+      for( n = 0; n < 24; n++ ) {
+        p_pkt[ 3 + n ] = emotidata[ emoticon ][ n ];
+      }
+      //memcpy( &p_pkt[ 3 ], emotidata[ emoticon ], 24 );
+      if( b_working) b_working = ( serial_write( p_pkt, 27 ) == 27 );
+      emotilast = emoticon;
+    }
     SDL_Delay( 20 ); // roughly 50 times second
   }
 }
 
 // Thread handles reception of UDP packets
 int receiver( void *unused ) {
-  int temp, size, tos = 0;
+  int temp, size = 0, tos = 0;
   client_t *p_client;
   char buffer[ 4096 ];
   while( 1 ) {
-    SDL_Delay( 1 );
+    if( size < 0 ) SDL_Delay( 1 );
     temp = sizeof( NET_ADDR );
     net_addr_init( &cli_addr, NET_ADDR_ANY, 0 ); // TODO: is this really necessary?
     size = net_recv( &h_sock, buffer, 32768, &cli_addr );
@@ -447,6 +524,12 @@ int main( int argc, char *argv[] ) {
   int            nalc = 0, nalb = 0;
   disp_data_t    disp;
   int            temp;
+  //Uint32         ms_diff, ms_last;
+  Uint32         time_target;
+  Sint32         time_diff;
+#ifdef SAVE_STREAM
+  FILE          *f;
+#endif
 
   printf( "KiwiRayServer [info]: OHAI!\n\n" );
 
@@ -544,10 +627,16 @@ int main( int argc, char *argv[] ) {
   																												 refresh that needs no other data to decode
   																												 the picture, and takes a lot more space
   																												 than P/B (differential) frames. */
-  
-  x264_param_parse( &param, "no-cabac", NULL );					/* Disable CABAC.
+
+/*x264_param_parse( &param, "no-cabac", NULL );			  *//* Disable CABAC.
   																												 It's been said it's unsuitable for this
   																												 type of H.264 application. */
+  																										  /* Further investigation shows that this is
+  																										     not correct, using CABAC will not cause
+  																										     performance spikes in this instance, and
+  																										     will offload some of the encoders work
+  																										     onto the decoder resulting in better
+  																										     server performance */
   
   param.b_annexb = 1;																		/* Use Annex-B packaging.
   																											   This appends a marker at the start of
@@ -607,6 +696,12 @@ int main( int argc, char *argv[] ) {
   client_mx = SDL_CreateMutex();
   atexit( client_mx_close );
 
+#ifdef SAVE_STREAM
+  f = fopen( SAVE_STREAM, "wb" );
+#endif
+
+  time_target = SDL_GetTicks();
+
   while( !quit ) {
 
   	sam_poll();
@@ -644,6 +739,10 @@ int main( int argc, char *argv[] ) {
       nalc += 1;
       nalb += nals[ n ].i_payload;
     }
+
+#ifdef SAVE_STREAM
+    fwrite( p_buffer, 1, i_buffer, f );
+#endif
 
     // Largest packet
     if( pl > pt ) pt = pl;
@@ -734,7 +833,7 @@ int main( int argc, char *argv[] ) {
 
       // Send DATA packet
       net_send( &h_sock, p_buffer, i_buffer, &client_first->client );
-
+      
     } else {
       drive_x = 0;
       drive_y = 0;
@@ -743,14 +842,28 @@ int main( int argc, char *argv[] ) {
       integrate_r = 0;
     }
 
-    // Get roughly 25fps
-    // TODO: correct based on high resolution timer
-    SDL_Delay( 1000 / STREAM_FPS );
+    // Delay 1/STREAM_FPS seconds, constantly correct for processing overhead
+    time_diff = SDL_GetTicks() - time_target;
+    if( time_diff > 1000 / STREAM_FPS ) { 
+      time_diff = 0;
+      time_target = SDL_GetTicks(); // Reset on overflow
+      printf( "KiwiRayServer [warning]: Encoder cannot keep up with desired FPS\n" );
+    }
+    if( time_diff < 0 ) {
+      time_diff = 0;
+      printf( "KiwiRayServer [error]: SDL_Delay returns too fast\n" );
+    }
+    time_target += 1000 / STREAM_FPS;
+    SDL_Delay( ( 1000 / STREAM_FPS ) - time_diff );
 
     // Tick client timers
     clients_tick();
 
   }
+
+#ifdef SAVE_STREAM
+  fclose( f );
+#endif
 
   printf( "KiwiRayServer [info]: NAL units: %i, %i bytes\n", nalc, nalb );
   printf( "KiwiRayServer [info]: Largest packet: %i\n\n", pt );
