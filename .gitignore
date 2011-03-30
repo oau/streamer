@@ -5,6 +5,7 @@
 /work/
 
 # Ignores for windows
+desktop.ini
 /include/videoinput.h
 /include/x264.h
 /include/ffmpeg/
@@ -14,8 +15,6 @@
 /bin/*.dll
 /bin/*.bat
 /bin/std*.txt
-
-desktop.ini
 
 # Ignores for linux
 /lib-linux/
