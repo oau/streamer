@@ -34,6 +34,13 @@ enum km_e {
   KM_SIZE
 };
 
+enum kbd_layout_e {
+  KL_QWERTY,
+  KL_DVORAK,
+  KL_AZERTY,
+  KL_SIZE
+};
+
 typedef struct {
   char data[ 8192 ];
   int size;
@@ -83,6 +90,44 @@ static     SDL_mutex *trust_mx;                        // Non-lossy buffer acces
 static           int  trust_timeout = 0;               // Non-lossy retransmission timeout
 static           int  b_cursor_grabbed;                // Is cursor currently "grabbed"?
 static         Uint8  draw_red, draw_green, draw_blue; // Drawing color
+static unsigned char  layout = KL_QWERTY;
+static        SDLKey  keymap[ KM_SIZE ];               // Keyboard remapping
+static  unsigned int  message_timeout = 0;
+
+// Display message
+static void message( char* text ) {
+  term_write( 1, 27, text, 1 );
+  message_timeout = 125;
+}
+
+// Switches keyboard layout
+static void set_layout( unsigned char new_layout ) {
+  // Mapping schemes for QWERTY (WASD) Dvorak (,AOE) and AZERTY (ZQSD)
+  layout = new_layout % KL_SIZE;
+  switch( layout ) {
+    case KL_QWERTY:
+      keymap[ KM_UP ]    = SDLK_w;
+      keymap[ KM_LEFT ]  = SDLK_a;
+      keymap[ KM_DOWN ]  = SDLK_s;
+      keymap[ KM_RIGHT ] = SDLK_d;
+      message( "SWITCHED TO QWERTY" );
+      break;
+    case KL_DVORAK:
+      keymap[ KM_UP ]    = SDLK_COMMA;
+      keymap[ KM_LEFT ]  = SDLK_a;
+      keymap[ KM_DOWN ]  = SDLK_o;
+      keymap[ KM_RIGHT ] = SDLK_e;
+      message( "SWITCHED TO DVORAK" );
+      break;
+    case KL_AZERTY:
+      keymap[ KM_UP ]    = SDLK_z;
+      keymap[ KM_LEFT ]  = SDLK_q;
+      keymap[ KM_DOWN ]  = SDLK_s;
+      keymap[ KM_RIGHT ] = SDLK_d;
+      message( "SWITCHED TO AZERTY" );
+      break;
+  }
+}
 
 // Queues a packet for trusted (non-lossy) transmission
 static void trust_queue( void* data, unsigned char size ) {
@@ -286,7 +331,7 @@ void help_draw() {
   term_write( 4, 15, "F: TOGGLE FULL-SCREEN", 0 );
   term_write( 4, 16, "   WHEN IN WINDOWED MODE, USED", 0 );
   term_write( 4, 17, "   MOUSE-LEFT TO GRAB/UNGRAB", 0 );
-  term_write( 4, 18, "Q: QUIT", 0 );
+  term_write( 4, 18, "ESCAPE: QUIT", 0 );
 }
 
 // Clears the help screen
@@ -404,16 +449,11 @@ int main( int argc, char *argv[] ) {
   SDL_Event          event;                      // Events
   int                quit = 0;                   // Time to quit?
   ctrl_data_t        ctrl;                       // Part of CTRL packet
-  SDLKey             keymap[ KM_SIZE ];          // Keyboard remapping
   int                b_help = 0;                 // Help is displayed?
 
   printf( "KiwiDriveClient [info]: OHAI!\n" );
 
-  // TODO: remapping schemes for Dvorak (,AOE) and AZERTY (ZQSD)
-  keymap[ KM_LEFT ]  = SDLK_a;
-  keymap[ KM_RIGHT ] = SDLK_d;
-  keymap[ KM_UP ]    = SDLK_w;
-  keymap[ KM_DOWN ]  = SDLK_s;
+  set_layout( KL_QWERTY );
 
   if( argc < 2 ) {
     printf( "KiwiDriveClient [error]: Need to specify IP-address on command-line\n" );
@@ -720,6 +760,11 @@ int main( int argc, char *argv[] ) {
       rect.h = help->h;
       SDL_BlitSurface( help, NULL, screen, &rect );
     }
+
+    // Clear messages
+    if( message_timeout ) {
+      if( --message_timeout == 0 ) term_white( 1, 27, 38 );
+    }
     
     // Draw terminal overlay
     term_draw();
@@ -754,6 +799,16 @@ int main( int argc, char *argv[] ) {
         case SDL_KEYDOWN:
           if( l_text >= 0 ) {
             switch( event.key.keysym.sym ) {
+              case SDLK_BACKSPACE:
+                // Remove last character
+                if( l_text > 0 ) {
+                  p_text[ --l_text ] = 0;
+                  term_white( l_text + 2, 28, 1 );
+                  term_cins( l_text + 2, 28 );
+                  break;
+                }
+                //...
+
               case SDLK_RETURN:
                 if( l_text > 0 ) {
                   // Send to server
@@ -772,15 +827,6 @@ int main( int argc, char *argv[] ) {
                 term_crem();
                 break;
                 
-              case SDLK_BACKSPACE:
-                // Remove last character
-                if( l_text > 0 ) {
-                  p_text[ --l_text ] = 0;
-                  term_white( l_text + 2, 28, 1 );
-                  term_cins( l_text + 2, 28 );
-                }
-                break;
-                
               default:
                 // Attempt to insert character
                 c_text = UnicodeChar( event.key.keysym.unicode );
@@ -794,22 +840,23 @@ int main( int argc, char *argv[] ) {
             }
           } else {
             switch( event.key.keysym.sym ) {
-              case SDLK_q:
-                // Set quit
+              case SDLK_ESCAPE: // Quit
                 quit = 1;
                 break;
                 
-              case SDLK_f:
-                // Toggle fullscreen
+              case SDLK_f: // Toggle fullscreen
                 b_fullscreen = !b_fullscreen;
                 screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( b_fullscreen ? SDL_FULLSCREEN : 0 ) );
                 // TODO: need check if fullscreen was possible?
                 cursor_grab( b_fullscreen );
                 laststate = -1;
                 break;
-
-              case SDLK_t:
-                // Begin text input
+                
+              case SDLK_l: // Switch keyboard layout
+                set_layout( layout + 1 );
+                break;
+                
+              case SDLK_t: // Text input
                 if( state == STATE_STREAMING ) {
                   l_text = 0;
                   p_text[ 0 ] = 0x00;
@@ -819,8 +866,7 @@ int main( int argc, char *argv[] ) {
                 }
                 break;
                 
-              case SDLK_h:
-                // Toggle help
+              case SDLK_h: // Toggle help
                 b_help = !b_help;
                 if( b_help ) {
                   help_draw();
@@ -828,8 +874,7 @@ int main( int argc, char *argv[] ) {
                   help_clear();
                 }
 
-              default:
-                // WASD control scheme
+              default: // WASD control scheme
                 if( event.key.keysym.sym == keymap[ KM_LEFT ] ) {
                   ctrl.ctrl.kb |= KB_LEFT;
                 } else if( event.key.keysym.sym == keymap[ KM_RIGHT ] ) {

@@ -45,7 +45,7 @@
 // Streaming
 #define STREAM_WIDTH        640 // Width of streamed video
 #define STREAM_HEIGHT       480 // Height of streamed video
-#define STREAM_FPS           25 // FPS of streamed video
+#define STREAM_FPS           25 // FPS of streamed video (also requested capture FPS)
 
 // Timeouts (in frames, see STREAM_FPS)
 #define TIMEOUT_CONNECTION  100 // Before connection is closed if no data has arrived
