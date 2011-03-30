@@ -2,6 +2,7 @@
 *.o
 /sam/bin/
 .dropbox
+/work/
 
 # Ignores for windows
 /include/videoinput.h
