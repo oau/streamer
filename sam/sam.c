@@ -1,8 +1,8 @@
 #include <stdio.h>
-#include "SamTabs.h"
+#include "samtabs.h"
 #include <stdio.h>
 #include <string.h>
-#include "ReciterTabs.h"
+#include "recitertabs.h"
 #include "sam.h"
 
 
