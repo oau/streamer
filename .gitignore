@@ -18,4 +18,5 @@
 desktop.ini
 
 # Ignores for linux
+/lib-linux/
 # phrst?
