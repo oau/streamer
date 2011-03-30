@@ -397,7 +397,7 @@ int kiwiray( void *unused ) {
     if( b_working) b_working = ( serial_write( p_pkt, 7 ) == 7 );
     if( emotilast != emoticon ) {
       p_pkt[ 1 ] = 0x33;             // Display
-      p_pkt[ 2 ] = 24;               // 8x8x3 bits
+      p_pkt[ 2 ] = 23;               // 8x8x3 bits (-1)
       for( n = 0; n < 24; n++ ) {
         p_pkt[ 3 + n ] = emotidata[ emoticon ][ n ];
       }
@@ -411,14 +411,12 @@ int kiwiray( void *unused ) {
 
 // Thread handles reception of UDP packets
 int receiver( void *unused ) {
-  int temp, size = 0, tos = 0;
+  int size;
   client_t *p_client;
-  char buffer[ 4096 ];
+  char buffer[ 8192 ];
   while( 1 ) {
-    if( size < 0 ) SDL_Delay( 1 );
-    temp = sizeof( NET_ADDR );
     net_addr_init( &cli_addr, NET_ADDR_ANY, 0 ); // TODO: is this really necessary?
-    size = net_recv( &h_sock, buffer, 32768, &cli_addr );
+    size = net_recv( &h_sock, buffer, 8192, &cli_addr );
     // Find client
     p_client = clients_find( &cli_addr );
     if( p_client ) {
@@ -472,7 +470,7 @@ int receiver( void *unused ) {
       }
     } else {
       // Client unknown
-      if( size == 4 ) {
+      if( size >= 4 ) {
         if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
           // Handshake, add
           p_client = clients_add( &cli_addr );

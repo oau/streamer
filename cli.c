@@ -241,21 +241,12 @@ static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
    SDL_UnlockSurface( screen );
 }
 
-// Hide or show the cursor
-// Wrapper courtesy of Zoltan@forums.libsdl.org
-static void cursor_hide( int b_hide ) {
-  int x, y;
-  SDL_GetMouseState( &x, &y );
-  SDL_ShowCursor( b_hide ? SDL_DISABLE : SDL_ENABLE );
-  SDL_WarpMouse( x, y );
-}
-
 // Grab the cursor (locks cursor to our app)
 static void cursor_grab( int b_grab ) {
   SDL_GrabMode ret; 
   ret = SDL_WM_GrabInput( b_grab ? SDL_GRAB_ON : SDL_GRAB_OFF );
   b_cursor_grabbed = ( ret & SDL_GRAB_ON ) != 0;
-  cursor_hide( b_cursor_grabbed );
+  SDL_ShowCursor( b_cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
 }
 
 // Poll cursor with warping support and grabbing detection
@@ -741,6 +732,16 @@ int main( int argc, char *argv[] ) {
         case SDL_QUIT:
           // Set time to quit
           quit = 1;
+          break;
+          
+        case SDL_ACTIVEEVENT:
+          if( event.active.state & SDL_APPINPUTFOCUS ) {
+            if( event.active.gain == 1 ) {
+              cursor_grab( b_fullscreen );
+            } else {
+              cursor_grab( 0 );
+            }
+          }
           break;
           
         case SDL_MOUSEBUTTONDOWN:

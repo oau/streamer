@@ -179,25 +179,19 @@ switch(p)
         return 0;
 }
 
-static void Write(unsigned char p, unsigned char Y, unsigned char value)
-{
-
-switch(p)
-{
-        case 168: tab43008[Y] = value; return;
-	case 169: frequency1[Y] = value;  return;
-        case 170: frequency2[Y] = value;  return;
-        case 171: frequency3[Y] = value;  return;
-        case 172: amplitude1[Y] = value;  return;
-	case 173: amplitude2[Y] = value;  return;
-	case 174: amplitude3[Y] = value;  return;
+static void Write(unsigned char p, unsigned char Y, unsigned char value) {
+  switch(p) {
+      case 168: tab43008[Y] = value; break;
+  	  case 169: frequency1[Y] = value; break;
+      case 170: frequency2[Y] = value; break;
+      case 171: frequency3[Y] = value; break;
+      case 172: amplitude1[Y] = value; break;
+    	case 173: amplitude2[Y] = value; break;
+    	case 174: amplitude3[Y] = value; break;
+    	default:
+    	  printf("Error writing to tables\n");
+  }
 }
-        printf("Error writing to tables\n");
-
-}
-
-
-
 
 int sam_speak( char *p_buffer, int *i_buffer, char* p_text ) {
 	Init();
@@ -206,7 +200,7 @@ int sam_speak( char *p_buffer, int *i_buffer, char* p_text ) {
   bufferpos = 0;
   
 	phonemeindex[255] = 32; //to prevent buffer overflow
-
+	
     int temp;
 	//mem[39444] = 255;  //maybe errorposition
 	if (!Parser1()) {
@@ -229,10 +223,11 @@ int sam_speak( char *p_buffer, int *i_buffer, char* p_text ) {
 		X++;
 	} while (X != 0);
 
-//pos39848:
+
+	
 	Code48431();
 
-	//mem[40158] = 255;
+
 
 	Code48547();
 
@@ -288,50 +283,47 @@ while(1)
 
 }
 
-static void Code48431()
-{
-        unsigned char mem54;
-        unsigned char mem55;
-        unsigned char index; //variable Y
+static void Code48431() {
+  unsigned char mem54;
+  unsigned char mem55;
+  unsigned char index; //variable Y
+	unsigned char mem66;
 	mem54 = 255;
-	X++;
+	//X++;
 	mem55 = 0;
-	unsigned char mem66 = 0;
-        while(1)
-        {
+	mem66 = 0;
+  while( 1 ) {
 //pos48440:
 		X = mem66;
-		index = phonemeindex[X];
-		if (index == 255) return;
-		mem55 += phonemeLength[X];
+		index = phonemeindex[ X ];
+		if( index == 255 ) return;
+		mem55 += phonemeLength[ X ];
 
-		if (mem55 < 232)
-		{
-			A = flags2[index]&1;
-			if(A != 0)
-			{
+		if( mem55 < 232 ) {
+			A = flags2[ index ] & 1;
+			if( A != 0 ) {
 				X++;
 				mem55 = 0;
-				Insert(X, 254, mem59, 0);
+				Insert( X, 254, mem59, 0 );
 				mem66++;
 				mem66++;
 				continue;
 			}
-			if (index == 0) mem54 = X;
+			if( index == 0 ) mem54 = X;
 			mem66++;
 			continue;
 		}
-		X = mem54;
-		phonemeindex[X] = 31;   // 'Q'
-		phonemeLength[X] = 4;
-		stress[X] = 0;
+		//X = mem54; // This caused weird crashes?
+		phonemeindex[ X ] = 31;   // 'Q'
+		phonemeLength[ X ] = 4;
+		stress[ X ] = 0;
 		X++;
 		mem55 = 0;
-		Insert(X, 254, mem59, 0);
+		Insert( X, 254, mem59, 0 );
 		X++;
 		mem66 = X;
+    return;
 	}
-
 }
 
 
@@ -379,78 +371,65 @@ static void Insert(unsigned char position/*var57*/, unsigned char mem60, unsigne
 }
 
 
-static int Parser1()
-{
+static int Parser1() {
 	int i;
-        unsigned char sign1;
-        unsigned char sign2;
-        unsigned char position=0;
-   	X = 0;
+  unsigned char sign1;
+  unsigned char sign2;
+  unsigned char position=0;
+ 	X = 0;
 	A = 0;
 	Y = 0;
-        for(i=0; i<256; i++)
-                stress[i] = 0;
+  for(i=0; i<256; i++) stress[i] = 0;
+  while(1) {
+  	sign1 = input[X];
+  	if (sign1 == 155) {
+      phonemeindex[position] = 255;      //mark endpoint
+  		return 1;       //all ok
+  	}
+	  X++;
+	  sign2 = input[X];
 
-while(1)
-{
-//pos41078:
-	sign1 = input[X];
-	if (sign1 == 155)
-        {
-        	phonemeindex[position] = 255;      //mark endpoint
-		return 1;       //all ok
-	}
-	X++;
-	sign2 = input[X];
-
-	Y = 0;
+	  Y = 0;
 pos41095:
-        A = signInputTable1[Y];
-        if (A == sign1)
-        {
-               	A = signInputTable2[Y];
-                if ((A != '*') && (A == sign2))
-                {
-			phonemeindex[position] = Y;
-                	position++;
-                	X++;
-                        continue;
-                }
-		}
-	Y++;
-	if (Y != 81) goto pos41095;
+    A = signInputTable1[Y];
+    if (A == sign1) {
+   	  A = signInputTable2[Y];
+      if ((A != '*') && (A == sign2)) {
+			  phonemeindex[position] = Y;
+        position++;
+        X++;
+        continue;
+      }
+    }
+	  Y++;
+	  if (Y != 81) goto pos41095;
 
-	Y = 0;
+	  Y = 0;
 pos41134:
 
-		if (signInputTable2[Y] == '*')
-		{
-                if (signInputTable1[Y] == sign1)
-                {
-                	phonemeindex[position] = Y;
-                	position++;
-			continue;
-                }
-        	}
-	Y++;
-	if (Y != 81) goto pos41134; //81 is size of table
+	  if (signInputTable2[Y] == '*') {
+      if (signInputTable1[Y] == sign1) {
+    	  phonemeindex[position] = Y;
+    	  position++;
+        continue;
+      }
+    }
+	  Y++;
+	  if (Y != 81) goto pos41134; //81 is size of table
+    
+  	Y = 8;
+    while( (sign1 != stressInputTable[Y]) && (Y>0)) {
+      Y--;
+    }
 
-        
-	Y = 8;
-        while( (sign1 != stressInputTable[Y]) && (Y>0))
-        {
-                Y--;
-        }
+    if (Y == 0) {
+  	  //mem[39444] = X;
+          //41181: JSR 42043 //Error
+  	  return 0;
+    }
 
-        if (Y == 0)
-        {
-        	//mem[39444] = X;
-                //41181: JSR 42043 //Error
-        	return 0;
-        }
-
-	stress[position-1] = Y;
-} //while
+	  stress[position-1] = Y;
+  } //while
 
 
 }
