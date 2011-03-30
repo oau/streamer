@@ -1,0 +1,9 @@
+/include/videoinput.h
+/include/x264.h
+/include/ffmpeg/
+/include/SDL/
+*.o
+/lib-w32/
+/sam/bin/
+/bin/srv.exe
+/bin/cli.exe

@@ -1,11 +1,11 @@
 @ECHO OFF
 
 ECHO Compiling sam.c...
-gcc sam.c -c -I ..\include\sdl -I .\include
+gcc sam.c -c -I..\include -I.\include
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Compiling sammain.c...
-gcc sammain.c -c -I ..\include\sdl -I .\include
+gcc sammain.c -c -I..\include -I.\include
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Linking...
