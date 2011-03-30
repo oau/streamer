@@ -4,4 +4,4 @@ The basic implementation contains a server (with text-to-speech and serial commu
 
 The project compiles under Linux and Windows.
 
-To build on Windows you might want to download the pre-compiled libraries and headers, which should be available at http://www.forskningsavd.se/wiki/index.php/KiwiDrive_HouseBot
+To build on Windows you might want to save yourself the trouble of manually compiling several open-source projects and simply download the necessary pre-compiled libraries, which should be available at http://www.forskningsavd.se/wiki/index.php/KiwiDrive_HouseBot
