@@ -16,13 +16,16 @@ ECHO Compiling speech.c...
 gcc speech.c -g -I ./include -I ./include/ffmpeg -c
 IF ERRORLEVEL 1 GOTO ERROR
 
+ECHO Resources...
+windres cli-w32.rc -O coff -o cli.res
+
 ECHO Linking...
-gcc oswrap.o cli_term.o cli.o speech.o -g -I ./include -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lavcodec -lavutil -lwsock32 -lmsvcrt -lswscale -lsam -o bin/cli.exe
+gcc oswrap.o cli_term.o cli.o speech.o cli.res -g -I ./include -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lavcodec -lavutil -lwsock32 -lmsvcrt -lswscale -lsam -o bin/cli.exe
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Cleaning up...
 del *.o
-REM SLEEP 1
+del *.res
 REM strip bin/cli.exe
 
 ECHO Done!

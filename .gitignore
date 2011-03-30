@@ -10,10 +10,11 @@
 /include/ffmpeg/
 /include/SDL/
 /lib-w32/
-/bin/srv.exe
-/bin/cli.exe
-/bin/sdl.dll
+/bin/*.exe
+/bin/*.dll
+/bin/*.bat
 /bin/std*.txt
+
 desktop.ini
 
 # Ignores for linux
