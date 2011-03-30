@@ -2,8 +2,11 @@ An UDP-based robot control application with a strong focus on very low latency. 
 
 Developed for the KiwiRay project - an easy to build, open hardware omnidirectional robot platform.
 
-The basic implementation contains a server (with text-to-speech and serial communication towards the robot hardware, using x264 for video encoding) and a client (basic WASD+mouse control scheme and command prompt, using ffmpeg for video decoding).
+This basic implementation contains a server (with text-to-speech and serial communication towards the robot hardware, using x264 for video encoding) and a client (basic WASD+mouse control scheme and command prompt, using ffmpeg for video decoding).
 
 The project compiles under Linux and Windows.
+
+The ./sam/ folder contains the speech synthesis library and must be compiled prior to compiling the server and client.
+SAM is an old TTS from the C64 (Software Automatic Mouth) and the source code is based on the assembly to C port by Sebastian Macke.
 
 To build on Windows you might want to save yourself the trouble of manually compiling several open-source projects and simply download the necessary pre-compiled libraries, which should be available at http://www.forskningsavd.se/wiki/index.php/KiwiDrive_HouseBot

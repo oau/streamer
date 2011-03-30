@@ -11,6 +11,8 @@
 /lib-w32/
 /bin/srv.exe
 /bin/cli.exe
+/bin/sdl.dll
+/bin/std*.txt
 desktop.ini
 
 # Ignores for linux
