@@ -6,7 +6,7 @@
 #include <x264.h>
 #include "include/kiwiray.h"
 #include <SDL/SDL.h>
-#include "include/sam_queue.h"
+#include "include/speech.h"
 #include <stdlib.h>
 #ifdef _WIN32
 #include <shellapi.h>
@@ -17,7 +17,7 @@
 #endif
 
 // Audio
-//#define DISABLE_SPEECH          // Disables SAM
+//#define DISABLE_SPEECH          // Disables speech
 
 // Save the stream
 //#define SAVE_STREAM           "server.h264"
@@ -186,7 +186,7 @@ void trust_handler( client_t *p_client, char* data, int size ) {
     }
   }
 #ifndef DISABLE_SPEECH
-  sam_queue( data );
+  speech_queue( data );
 #endif
 }
 
@@ -683,8 +683,8 @@ int main( int argc, char *argv[] ) {
   }
 
 #ifndef DISABLE_SPEECH
-  sam_open();
-  sam_queue( "INITIALIZED AND READY FOR CONNECTION" );
+  speech_open();
+  speech_queue( "INITIALIZED AND READY FOR CONNECTION" );
 #endif
 
   printf( "\nKiwiRayServer [info]: listening on port %i...\n", port );
@@ -702,7 +702,7 @@ int main( int argc, char *argv[] ) {
 
   while( !quit ) {
 
-  	sam_poll();
+  	speech_poll();
 
     // Fetch latest picture from capture device
     data = ( uint8_t * )cam_fetch();

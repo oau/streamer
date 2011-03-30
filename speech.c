@@ -23,7 +23,8 @@ static int           sam_speaking = 0;
 static unsigned char vis_buffer[ VIS_SIZE ];
 static int  do_vis = 0;
 static int ctr = 0;
-int sam_vis( unsigned char **buffer ) {
+
+int speech_vis( unsigned char **buffer ) {
 	do_vis = 1;
 	if( sam_speaking == 1 ) {
 		*buffer = vis_buffer;
@@ -62,7 +63,7 @@ static void sdl_mixer( void *unused, Uint8 *stream, int len ) {
 	}
 }
 
-void sam_open() {
+void speech_open() {
   SDL_AudioSpec fmt;
   fmt.freq     = 11025;
   fmt.format   = AUDIO_U8;
@@ -83,7 +84,7 @@ static void sam_play() {
 	SDL_PauseAudio( 0 );
 }
 
-void sam_poll() {
+void speech_poll() {
   sam_list_t *p_sam;
 	if( sam_speaking == 2 ) {
     SDL_PauseAudio( 1 );
@@ -104,7 +105,7 @@ void sam_poll() {
 	}
 }
 
-void sam_queue( char* speak ) {
+void speech_queue( char* speak ) {
   sam_list_t *p_sam = malloc( sizeof( sam_list_t ) );
   // Copy and convert to phenomes
   memset( p_sam->phenomes, 0, 256 );
@@ -121,10 +122,10 @@ void sam_queue( char* speak ) {
 	}  
 	sam_last = p_sam;
 	
-	sam_poll();
+	speech_poll();
 
 }
 
-int sam_state() {
+int speech_state() {
 	return( sam_speaking );
 }

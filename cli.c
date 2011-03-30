@@ -6,7 +6,7 @@
 #include <libavcodec/avcodec.h>
 #include "include/cli_term.h"
 #include "include/kiwiray.h"
-#include "include/sam_queue.h"
+#include "include/speech.h"
 
 #define MAX_RETRY       5
 #define MAX_NO_H264   125 // milliseconds/20
@@ -398,7 +398,7 @@ int main( int argc, char *argv[] ) {
   SDL_Thread        *hReceiver;                  // Thread handle to UDP receiver
   SDL_Rect           rect;                       // Used for various graphics operations
   SDL_Surface       *live = NULL;                // Live decoded video surface
-  char              *p_vis;                      // Pointer to SAM visualization data
+  char              *p_vis;                      // Pointer to speech visualization data
   int                b_fullscreen;               // Are we in fullscreen mode?
   Uint32             rmask, gmask, bmask, amask; // Masking (endianness)
   SDL_Event          event;                      // Events
@@ -491,7 +491,7 @@ int main( int argc, char *argv[] ) {
   p_buffer_first = p_buffer_last;
   p_buffer_last->size = 0;
   
-  sam_open();
+  speech_open();
   
   trust_mx = SDL_CreateMutex();
 
@@ -500,7 +500,7 @@ int main( int argc, char *argv[] ) {
   
   while( !quit ) {
 
-    sam_poll();
+    speech_poll();
     cursor_poll( &ctrl.ctrl.mx, &ctrl.ctrl.my );
 
     /*
@@ -636,7 +636,7 @@ int main( int argc, char *argv[] ) {
         SDL_FillRect( screen, &rect, 0 );
       }
       
-      if( sam_vis( &p_vis ) == 0 ) {
+      if( speech_vis( &p_vis ) == 0 ) {
         for( temp = 0; temp < 636; temp += 4 ) {
           SetColor( 0x3F, 0x00, 0x3F );
           DrawWuLine( temp + 1, 441 + p_vis[ temp ], temp + 5, 441 + ( p_vis[ temp + 4 ] ) );
@@ -760,7 +760,7 @@ int main( int argc, char *argv[] ) {
                   memset( p_text + strlen( p_text ), 0, 255 - strlen( p_text ) );
                   trust_queue( p_text, strlen( p_text ) );
                   // Queue for local playback
-                  sam_queue( p_text );
+                  speech_queue( p_text );
                 }
                 //...
 
