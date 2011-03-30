@@ -1,10 +1,7 @@
-An UDP-based robot control application with a strong focus on very low latency.
-Video and control information is lossy, but the application also provides a
-secured channel for non-lossy communications where required.
+An UDP-based robot control application with a strong focus on very low latency. Video and control information is lossy, but the application also provides a secured channel for non-lossy communications where required.
 
-The basic implementation contains a server (with text-to-speech and serial
-communication towards the robot hardware, using x264 for video encoding) and
-a client (basic WASD+mouse control scheme and command prompt, using ffmpeg
-for video decoding).
+The basic implementation contains a server (with text-to-speech and serial communication towards the robot hardware, using x264 for video encoding) and a client (basic WASD+mouse control scheme and command prompt, using ffmpeg for video decoding).
 
 The project compiles under Linux and Windows.
+
+To build on Windows you might want to download the pre-compiled libraries and headers, which should be available at http://www.forskningsavd.se/wiki/index.php/KiwiDrive_HouseBot
