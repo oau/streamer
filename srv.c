@@ -23,10 +23,11 @@
 //#define SAVE_STREAM           "server.h264"
 
 // Movement
-#define ROT_DZN               0 // Dead-zone
+#define ROT_DZN               1 // Dead-zone TODO: verify
 #define ROT_ACC              10 // Acceleration
 #define ROT_DMP               3 // Dampening
 #define ROT_SEN               1 // Sensitivity
+#define ROT_MAX            1000 // Max accumulated rotation TODO: verify
 
 #define MOV_ACC               5 // Acceleration
 #define MOV_BRK              10 // Breaking
@@ -52,6 +53,10 @@
 #define TIMEOUT_CONTROL    7500 // Before control session is ended
 #define TIMEOUT_TRUST         8 // Before retransmitting trusted packets
 #define TIMEOUT_GLITCH        2 // Before robot stops moving if a connection glitches/is lost
+
+// Math
+#define MIN( a, b ) ( a < b ? a : b )
+#define MAX( a, b ) ( a > b ? a : b )
 
 // Client data
 struct client_t {
@@ -785,6 +790,7 @@ int main( int argc, char *argv[] ) {
       // Handle movement R
       integrate_r -= ( drive_r * ROT_SEN );
       integrate_r += client_first->diff.mx;
+      integrate_r = MAX( MIN( integrate_r, ROT_MAX ), -ROT_MAX );
       if( integrate_r > ROT_DZN ) {
         drive_r = ( drive_r <  ( 127 - ROT_ACC ) ? drive_r + ROT_ACC :  127 );
         if( drive_r > integrate_r / ROT_DMP + ROT_DZN ) drive_r = integrate_r / ROT_DMP + ROT_DZN;
