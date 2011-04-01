@@ -7,14 +7,20 @@
 #include "speech.h"
 #include "cli_term.h"
 
-#define MAX_RETRY       5
-#define MAX_NO_H264   125 // milliseconds/20
-#define KIWI_VERSION    2
-#define PORT         6979
-#define TIMEOUT_TRUST  10 // milliseconds/20
+// Protocol
+#define MAX_RETRY             5 // Maximum number of retransmissions of lost packets
+#define CORTEX_VERSION        2 // Current protoco
+#define DEFAULT_PORT       6979 // Default port
 
-#define FULLSCREEN      0 // start fullscreen
+// Configuration
+#define FULLSCREEN            0 // Start in fullscreen
+#define CLIENT_RPS           50 // Client refreshes per second
 
+// Timeouts (in refreshes, see CLIENT_RPS)
+#define TIMEOUT_TRUST        16 // Before retransmitting trusted packets
+#define TIMEOUT_STREAM      125 // Before considering connection lost
+
+// Client state
 enum state_e {
   STATE_CONNECTING,
   STATE_QUEUED,
@@ -25,6 +31,7 @@ enum state_e {
   STATE_STREAMING
 };
 
+// Keyboard mapping
 enum km_e {
   KM_LEFT,
   KM_RIGHT,
@@ -33,6 +40,7 @@ enum km_e {
   KM_SIZE
 };
 
+// Keyboard layouts
 enum kbd_layout_e {
   KL_QWERTY,
   KL_DVORAK,
@@ -40,18 +48,7 @@ enum kbd_layout_e {
   KL_SIZE
 };
 
-typedef struct {
-  char data[ 8192 ];
-  int size;
-  void* next;
-} linked_buf_t;
-
-static NET_ADDR srv_addr;
-static int port = PORT;
-
-static disp_data_t disp_data;
-static SDL_Surface *logo;
-static SDL_Surface *help;
+// Texts
 static char text_contact[] =  "CONTACTING KIWIRAY1...";
 static char text_error[]   =  "   CONNECTION ERROR   ";
 static char text_queued[] =   "  QUEUED FOR CONTROL  ";
@@ -64,6 +61,7 @@ static char text_time[] =     "       00:00:00       ";
 static char text_controls[] = "IN CONTROL - PRESS H FOR HELP";
 static char text_timeout[] =  "TIME LEFT: 00:00";
 
+// Packet types
 static char pkt_h264[ 4 ] = { 0x00, 0x00, 0x00, 0x01 };
 static char pkt_data[ 4 ] = "DATA";
 static char pkt_helo[ 4 ] = "HELO";
@@ -73,6 +71,12 @@ static char pkt_lost[ 4 ] = "LOST";
 static char pkt_full[ 4 ] = "FULL";
 static char pkt_quit[ 4 ] = "QUIT";
 
+// Locals
+static   disp_data_t  disp_data;                       // Data from latest DISP packet
+static   SDL_Surface *logo;                            // Image resources
+static   SDL_Surface *help;
+static      NET_ADDR  srv_addr;                        // Server address
+static           int  port = DEFAULT_PORT;             // Server port
 static   SDL_Surface *screen;                          // Screen surface
 static           int  screen_w, screen_h, screen_bpp;  // Screen parameters
 static      NET_SOCK  h_sock;                          // Socket handle
@@ -300,6 +304,7 @@ static void cursor_poll( long *ix, long *iy ) {
   static int lx = 0, ly = 0;
   int cx = 0, cy = 0;
   int warp = 0;
+    
   if( !b_cursor_grabbed ) ready = 0;
   SDL_GetMouseState( &cx, &cy );
   if( ready ) {
@@ -390,7 +395,7 @@ static int receiver( void *unused ) {
         if( state == STATE_CONNECTING ) {
           
           // Go to queued only if version is correct
-          if( p_buffer_last->data[ 4 ] != KIWI_VERSION ) {
+          if( p_buffer_last->data[ 4 ] != CORTEX_VERSION ) {
             state = STATE_VERSION;
           } else {
             state = STATE_QUEUED;
@@ -449,6 +454,8 @@ int main( int argc, char *argv[] ) {
   int                quit = 0;                   // Time to quit?
   ctrl_data_t        ctrl;                       // Part of CTRL packet
   int                b_help = 0;                 // Help is displayed?
+  Uint32             time_target;
+  Sint32             time_diff;
 
   printf( "KiwiDriveClient [info]: OHAI!\n" );
 
@@ -612,7 +619,7 @@ int main( int argc, char *argv[] ) {
 
       // Send CTRL packet
       net_send( &h_sock, p_ctrl, i_ctrl, &srv_addr );
-      if( ++retry == MAX_NO_H264 ) state = STATE_LOST;
+      if( ++retry == TIMEOUT_STREAM ) state = STATE_LOST;
       
       if( p_buffer_first->size ) {
 
@@ -908,7 +915,21 @@ int main( int argc, char *argv[] ) {
       }
     }
 
-    SDL_Delay( 20 );  
+    // Delay 1/CLIENT_RPS seconds, constantly correct for processing overhead
+    time_diff = SDL_GetTicks() - time_target;
+    if( time_diff > 1000 / CLIENT_RPS ) { 
+      time_diff = 0;
+      time_target = SDL_GetTicks();
+      printf( "KiwiRayClient [warning]: Cannot keep up with desired RPS\n" );
+    }
+    if( time_diff < 0 ) {
+      time_diff = 0;
+      printf( "KiwiRayClient [error]: SDL_Delay returns too fast\n" );
+    }
+    time_target += 1000 / CLIENT_RPS;
+    SDL_Delay( ( 1000 / CLIENT_RPS ) - time_diff );
+    
+
   }
 
   // Send QUIT

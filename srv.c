@@ -14,7 +14,7 @@
 //#define DISABLE_SPEECH          // Disables speech
 
 // Save the stream
-//#define SAVE_STREAM           "server.h264"
+//#define SAVE_STREAM            "server.h264"
 
 // Movement
 #define ROT_DZN               1 // Dead-zone TODO: verify
@@ -29,7 +29,7 @@
 #define CAM_SEN             0.3 // Sensitivity
 
 // Protocol
-#define KIWI_VERSION          2 // Protocol revision
+#define CORTEX_VERSION        2 // Protocol revision
 #define DEFAULT_PORT       6979 // Default port
 #define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
 
@@ -82,13 +82,6 @@ enum exitcode_e {
   EXIT_AUDIO
 };
 
-// Linked buffer
-typedef struct {
-  char data[ 8192 ];
-  int size;
-  void* next;
-} linked_buf_t;
-
 // Sockets
 static NET_SOCK h_sock;
 static NET_ADDR srv_addr;
@@ -110,7 +103,7 @@ static linked_buf_t *trust_last = NULL;
 static int trust_timeout;
 static SDL_mutex *trust_mx;
 
-// Packets
+// Packet types
 static char pkt_data[ 4 ] = "DATA";
 static char pkt_helo[ 4 ] = "HELO";
 static char pkt_time[ 4 ] = "TIME";
@@ -422,7 +415,7 @@ int receiver( void *unused ) {
       if( size >= 4 ) {
         if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
           // Re-send HELO+version+time
-          buffer[ 4 ] = KIWI_VERSION;
+          buffer[ 4 ] = CORTEX_VERSION;
           net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
         } else if( memcmp( buffer, pkt_time, 4 ) == 0 ) {
           // Send TIME+time
@@ -475,7 +468,7 @@ int receiver( void *unused ) {
           p_client = clients_add( &cli_addr );
           if( p_client ) {
             // Connection accepted, send HELO+version+time
-            buffer[ 4 ] = KIWI_VERSION;
+            buffer[ 4 ] = CORTEX_VERSION;
             net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
           } else {
             // Server is full, send FULL
@@ -521,7 +514,6 @@ int main( int argc, char *argv[] ) {
   int            nalc = 0, nalb = 0;
   disp_data_t    disp;
   int            temp;
-  //Uint32         ms_diff, ms_last;
   Uint32         time_target;
   Sint32         time_diff;
 #ifdef SAVE_STREAM
