@@ -1,5 +1,5 @@
-// Makes application an SDL console application instead of a windowed application
-// Useful for applications that need SDL_audio or other non-graphical subsystems
+// Makes an SDL application a console application instead of a windowed application.
+// For applications that need SDL_audio or other non-graphical subsystems.
 // Used instead of -mwindows -lmingw32 -lsdlmain
 #ifdef _WIN32
 

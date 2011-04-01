@@ -1,12 +1,11 @@
 #include <stdio.h>
-#include <sys/types.h>
 #include <SDL/SDL.h>
-#include "include/oswrap.h"
 #include <libswscale/swscale.h>
 #include <libavcodec/avcodec.h>
-#include "include/cli_term.h"
+#include "include/oswrap.h"
 #include "include/kiwiray.h"
 #include "include/speech.h"
+#include "include/cli_term.h"
 
 #define MAX_RETRY       5
 #define MAX_NO_H264   125 // milliseconds/20

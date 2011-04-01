@@ -1,20 +1,14 @@
-#include <stdio.h>
+#include <stdlib.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <signal.h>
-#include "include/oswrap.h"
+#include <SDL/SDL.h>
 #include <libswscale/swscale.h>
 #include <x264.h>
+#include "include/oswrap.h"
 #include "include/kiwiray.h"
-#include <SDL/SDL.h>
 #include "include/speech.h"
-#include <stdlib.h>
-#ifdef _WIN32
-#include <shellapi.h>
-#include <windows.h>
-#ifndef USESDL
-#include "sdl_console.c"
-#endif
-#endif
+#include "include/sdl_console.h"
 
 // Audio
 //#define DISABLE_SPEECH          // Disables speech
