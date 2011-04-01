@@ -5,10 +5,10 @@
 #include <SDL/SDL.h>
 #include <libswscale/swscale.h>
 #include <x264.h>
-#include "include/oswrap.h"
-#include "include/kiwiray.h"
-#include "include/speech.h"
-#include "include/sdl_console.h"
+#include "oswrap.h"
+#include "kiwiray.h"
+#include "speech.h"
+#include "sdl_console.h"
 
 // Audio
 //#define DISABLE_SPEECH          // Disables speech
