@@ -1,5 +1,8 @@
 #!/bin/sh
 
+mkdir bin
+mkdir ../lib-linux
+
 echo Compiling sam.c...
 gcc sam.c -c -I ../include/sdl -I ./include
 
