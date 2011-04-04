@@ -17,14 +17,14 @@
 //#define SAVE_STREAM            "server.h264"
 
 // Movement
-#define ROT_DZN               1 // Dead-zone TODO: verify
-#define ROT_ACC              10 // Acceleration
-#define ROT_DMP               3 // Dampening
-#define ROT_SEN               1 // Sensitivity
+#define ROT_DZN               3 // Dead-zone TODO: verify
+#define ROT_ACC               6 // Acceleration
+#define ROT_DMP               6// Dampening
+#define ROT_SEN             0.5 // Sensitivity
 #define ROT_MAX            1000 // Max accumulated rotation TODO: verify
 
-#define MOV_ACC               5 // Acceleration
-#define MOV_BRK              10 // Breaking
+#define MOV_ACC               2 // Acceleration
+#define MOV_BRK               5 // Breaking
 
 #define CAM_SEN             0.3 // Sensitivity
 
@@ -38,8 +38,8 @@
 #define CAP_HEIGHT          480 // Requested capture height
 
 // Streaming
-#define STREAM_WIDTH        640 // Width of streamed video
-#define STREAM_HEIGHT       480 // Height of streamed video
+#define STREAM_WIDTH        320 // Width of streamed video
+#define STREAM_HEIGHT       240 // Height of streamed video
 #define STREAM_FPS           25 // FPS of streamed video (also requested capture FPS)
 
 // Timeouts (in frames, see STREAM_FPS)
@@ -47,10 +47,18 @@
 #define TIMEOUT_CONTROL    7500 // Before control session is ended
 #define TIMEOUT_TRUST         8 // Before retransmitting trusted packets
 #define TIMEOUT_GLITCH        2 // Before robot stops moving if a connection glitches/is lost
+#define TIMEOUT_EMOTICON    100 // Before emoticon is removed
 
 // Math
 #define MIN( a, b ) ( a < b ? a : b )
 #define MAX( a, b ) ( a > b ? a : b )
+
+enum emo_e {
+  EMO_IDLE,
+  EMO_CONNECTED,
+  EMO_HAPPY,
+  EMO_ANGRY
+};
 
 // Client data
 struct client_t {
@@ -133,6 +141,7 @@ static char *p_serdev = NULL;
 
 // Emoticons
 static unsigned char emoticon;
+static unsigned int emoticon_timeout;
 
 // Queues a packet for trusted (non-lossy) transmission
 static void trust_queue( void* data, unsigned char size ) {
@@ -167,12 +176,13 @@ void trust_handler( client_t *p_client, char* data, int size ) {
     if( data[ n ] == ':' ) {
       switch( data[ n + 1 ] ) {
         case ')':
-          emoticon = 2;
+          emoticon = EMO_HAPPY;
           break;
         case '(':
-          emoticon = 3;
+          emoticon = EMO_ANGRY;
           break;
       }
+      if( emoticon > 1 ) emoticon_timeout = TIMEOUT_EMOTICON;
       data[ n ] = ' ';
       data[ n + 1 ] = ' ';
     }
@@ -248,7 +258,7 @@ static client_t *clients_add( NET_ADDR *client ) {
         do_intra = 1; // Intra-refresh needed
         trust_clear();
         client_first = &clients[ n ];
-        emoticon = 1;
+        emoticon = EMO_CONNECTED;
       }
       client_last = &clients[ n ];
       p_ret = &clients[ n ];
@@ -301,9 +311,9 @@ static void clients_tick() {
     	// Time for client switch
       printf( "KiwiRayServer [info]: Client %i disconnected (time up)\n", client_first->index );
       client_first = client_first->next;
-    	emoticon = 0;
+    	emoticon = EMO_IDLE;
       if( client_first ) {
-        emoticon = 1;
+        emoticon = EMO_CONNECTED;
       	client_first->prev = NULL;
 	      do_intra = 1; // Intra-refresh needed
       }
@@ -563,16 +573,16 @@ int main( int argc, char *argv[] ) {
   cap_w = CAP_WIDTH;
   cap_h = CAP_HEIGHT;
   if( argc > 1 ) {
-    if( cam_init( argv[ 1 ], STREAM_FPS, &cap_w, &cap_h ) < 0 ) {
+    if( capture_init( argv[ 1 ], STREAM_FPS, &cap_w, &cap_h ) < 0 ) {
       fprintf( stderr, "KiwiRayServer [error]: Unable to open capture device %s\n", argv[ 1 ] );
       exit( EXIT_CAPTURE );
     }
     if( cap_w != CAP_WIDTH || cap_h != CAP_HEIGHT ) {
       printf( "KiwiRayServer [warning]: Captured video is %ix%i, not %ix%i\n\n", cap_w, cap_h, CAP_WIDTH, CAP_HEIGHT );
     }
-    atexit( cam_close );
+    atexit( capture_close );
   } else {
-    cam_init( NULL, STREAM_FPS, &cap_w, &cap_h );
+    capture_init( NULL, STREAM_FPS, &cap_w, &cap_h );
     exit( EXIT_OK );
   }
 
@@ -696,7 +706,7 @@ int main( int argc, char *argv[] ) {
   	speech_poll();
 
     // Fetch latest picture from capture device
-    data = ( uint8_t * )cam_fetch();
+    data = ( uint8_t * )capture_fetch( 0 );
 
 		// Scaling and coding as explained by http://stackoverflow.com/questions/2940671/how-to-encode-series-of-images-into-h264-using-x264-api-c-c
 
@@ -745,6 +755,10 @@ int main( int argc, char *argv[] ) {
         client_first->ctrl.ctrl.kb = 0;
       }
     }
+  	// Emoticon timeout
+  	if( emoticon_timeout ) {
+  	  if( --emoticon_timeout == 0 ) emoticon = ( temp ? EMO_CONNECTED : EMO_IDLE );
+  	}
     SDL_mutexV( client_mx );
     if( temp ) {
 

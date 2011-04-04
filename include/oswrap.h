@@ -68,9 +68,9 @@ int serial_write ( char* p_write, int i_write );
 int serial_close ();
 
 // Camera API
-unsigned char * cam_fetch();
-int             cam_init ( char* device, int fps, int *w, int *h );
-void            cam_close();
+unsigned char * capture_fetch( int dev );
+int             capture_init ( char* device, int fps, int *w, int *h );
+void            capture_close();
 
 #endif
 

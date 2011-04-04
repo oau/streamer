@@ -5,8 +5,8 @@ SET CFLAGS=-g
 SET LFLAGS=-g
 SET STRIP=NO
 
-ECHO Compiling cam.cpp...
-g++ cam.cpp %CFLAGS% -I ./include -c
+ECHO Compiling capture.cpp...
+g++ capture.cpp %CFLAGS% -I ./include -c
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Compiling srv.c...
@@ -22,8 +22,8 @@ gcc speech.c %CFLAGS% -I ./include -I ./include/ffmpeg -c
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Linking...
-g++ oswrap.o cam.o srv.o speech.o %LFLAGS% -L ./lib-w32                               -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv.exe
-g++ oswrap.o cam.o srv.o speech.o %LFLAGS% -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv_sdl.exe
+g++ oswrap.o capture.o srv.o speech.o %LFLAGS% -L ./lib-w32                               -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv.exe
+g++ oswrap.o capture.o srv.o speech.o %LFLAGS% -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv_sdl.exe
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Cleaning up...
