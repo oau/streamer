@@ -34,12 +34,15 @@
 #define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
 
 // Capture (device may not be capable and return another size)
-#define CAP_WIDTH           320 // Requested capture width
-#define CAP_HEIGHT          240 // Requested capture height
+#define CAP_SOURCES          10 // Max number of capture sources
+#define CAP_WIDTH           640 // Requested capture width
+#define CAP_HEIGHT          480 // Requested capture height
 
-// Streaming
+// Stream default size
 #define STREAM_WIDTH        320 // Width of streamed video
 #define STREAM_HEIGHT       240 // Height of streamed video
+
+// Stream FPS
 #define STREAM_FPS           25 // FPS of streamed video (also requested capture FPS)
 
 // Timeouts (in frames, see STREAM_FPS)
@@ -53,6 +56,7 @@
 #define MIN( a, b ) ( a < b ? a : b )
 #define MAX( a, b ) ( a > b ? a : b )
 
+// Emoticon list
 enum emo_e {
   EMO_IDLE,
   EMO_CONNECTED,
@@ -79,6 +83,26 @@ struct client_t {
 };
 typedef struct client_t client_t;
 
+// Rectangle
+typedef struct {
+  int x;
+  int y;
+  int w;
+  int h;
+} rect_t;
+
+// Capture setting
+typedef struct {
+  char device[ 256 ];  
+  int dev;
+  int w, h;
+  rect_t src;
+  rect_t dst;
+  uint8_t *data;
+  struct SwsContext* swsCtx;
+} capture_t;
+
+// Exit code list
 enum exitcode_e {
   EXIT_OK,
   EXIT_NETWORK,
@@ -87,13 +111,15 @@ enum exitcode_e {
   EXIT_CAPTURE,
   EXIT_SWSCALE,
   EXIT_PICTURE,
-  EXIT_AUDIO
+  EXIT_AUDIO,
+  EXIT_NOSOURCE
 };
 
 // Sockets
 static NET_SOCK h_sock;
 static NET_ADDR srv_addr;
 static NET_ADDR cli_addr;
+static int port = DEFAULT_PORT;
 
 // Locals
 static int quit     = 0; // Time to quit (SIGINT etc.)
@@ -127,21 +153,133 @@ static          char drive_r; // Turn
 static unsigned int drive_p; // Pitch
 static          long integrate_r = 0;
 
+// Capture
+static capture_t cap[ CAP_SOURCES ];
+static int cap_count;
+
 // Encoding
+int stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, stream_fps = STREAM_FPS;
 x264_t* encoder;
 x264_picture_t pic_in, pic_out;
-struct SwsContext* convertCtx;
 
 // Threads
 SDL_Thread    *hReceiver;
 SDL_Thread    *hKiwiray;
 
 // Serial
-static char *p_serdev = NULL;
+static char serdev[ 256 ];
 
 // Emoticons
 static unsigned char emoticon;
 static unsigned int emoticon_timeout;
+
+static void read_rc( FILE *f ) {
+  char line[ 256 ] = { ' ' };
+  char *es, *ps, *pe, *pl;
+  int  cap_i = -1;
+  
+  printf( "RoboCortex [info]: Reading configuration...\n" );
+  
+  //f = fopen( "srv.rc", "r" );
+  while( !feof( f ) ) {
+    if( fgets( line + 1, 250, f ) != NULL ) {
+      // Find entry start
+      es = line; while( *es == ' ' && *es != 0 ) if( *++es == '#' ) *es = 0;
+      if( *es != 0  ) {
+        // Find entry end
+        pe = es; while( *pe != ' ' && *pe != 0 ) if( *++pe == '#' ) *pe = 0;
+        
+        if( *pe != 0 ) {
+          // Replace with null-char
+          *pe = 0;
+          // Find parameter start
+          ps = pe + 1; while( *ps == ' ' && *ps != 0 ) if( *++ps == '#' ) *ps = 0;
+          if( *ps != 0 ) {
+            // Find parameter end
+            pe = ps;
+            while( *pe != 0 ) {
+              if( *pe != ' ' ) pl = pe;
+              if( *++pe == '#' ) *pe = 0;
+            }
+            // Replace with null-char
+            *pl = 0;
+            
+            if(        strcmp( es, "w"      ) == 0 ) {
+              if( cap_i >= 0 ) {
+                cap[ cap_i ].w = atoi( ps );
+                cap[ cap_i ].src.x = 0;
+                cap[ cap_i ].src.w = cap[ cap_i ].w;
+                cap[ cap_i ].dst.x = 0;
+                cap[ cap_i ].dst.w = stream_w;
+              } else stream_w = atoi( ps );
+            } else if( strcmp( es, "h"      ) == 0 ) {
+              if( cap_i >= 0 ) {
+                cap[ cap_i ].h = atoi( ps );
+                cap[ cap_i ].src.y = 0;
+                cap[ cap_i ].src.h = cap[ cap_i ].h;
+                cap[ cap_i ].dst.y = 0;
+                cap[ cap_i ].dst.h = stream_h;
+              } else stream_h = atoi( ps );
+            /*
+            } else if( strcmp( es, "fps"    ) == 0 ) {
+              if( cap_i >= 0 ) printf( "RoboCortex [warning]: Configuration - fps in device section.\n" );
+              else stream_fps = atoi( ps );
+            */
+            } else if( strcmp( es, "comms"  ) == 0 ) {
+              if( cap_i >= 0 ) printf( "RoboCortex [warning]: Configuration - comms in device section.\n" );
+              else strcpy( serdev, ps );
+            } else if( strcmp( es, "comms"  ) == 0 ) {
+              if( cap_i >= 0 ) printf( "RoboCortex [warning]: Configuration - comms in device section.\n" );
+              else port = atoi( ps );
+            } else if( strcmp( es, "device" ) == 0 ) {
+              if( cap_i >= ( CAP_SOURCES - 1 ) ) printf( "RoboCortex [warning]: Configuration - too many capture sources.\n" );
+              else {
+                cap_i++;
+                strcpy( cap[ cap_i ].device, ps );
+              }
+            } else if( strcmp( es, "src_x"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_x outside device section\n" );
+              else cap[ cap_i ].src.x = atoi( ps );
+            } else if( strcmp( es, "src_y"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_y outside device section\n" );
+              else cap[ cap_i ].src.y = atoi( ps );
+            } else if( strcmp( es, "src_w"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_w outside device section\n" );
+              else cap[ cap_i ].src.w = atoi( ps );
+            } else if( strcmp( es, "src_h"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_h outside device section\n" );
+              else cap[ cap_i ].src.h = atoi( ps );
+            } else if( strcmp( es, "dst_x"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_x outside device section\n" );
+              else cap[ cap_i ].dst.x = atoi( ps );
+            } else if( strcmp( es, "dst_y"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_y outside device section\n" );
+              else cap[ cap_i ].dst.y = atoi( ps );
+            } else if( strcmp( es, "dst_w"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_w outside device section\n" );
+              else cap[ cap_i ].dst.w = atoi( ps );
+            } else if( strcmp( es, "dst_h"  ) == 0 ) {
+              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_h outside device section\n" );
+              else cap[ cap_i ].dst.h = atoi( ps );
+            } else {
+              printf( "RoboCortex [warning]: Configuration - unknown entry %s\n", es );
+            }
+          }
+        }
+      }
+    }
+  }
+  printf( "RoboCortex [info]: Configuration - stream is %ix%ix%ifps\n", stream_w, stream_h, stream_fps );
+  for( cap_count = 0; cap_count <= cap_i; cap_count++ ) {
+    printf( "RoboCortex [info]: Configuration - capture %i:%s is %ix%i, %i:%ix%i:%i -> %i:%ix%i:%i\n",
+      cap_count, cap[ cap_count ].device,
+      cap[ cap_count ].w, cap[ cap_count ].h,
+      cap[ cap_count ].src.x, cap[ cap_count ].src.w, cap[ cap_count ].src.y, cap[ cap_count ].src.h,
+      cap[ cap_count ].dst.x, cap[ cap_count ].dst.w, cap[ cap_count ].dst.y, cap[ cap_count ].dst.h
+    );
+  }
+  fclose( f );
+}
 
 // Queues a packet for trusted (non-lossy) transmission
 static void trust_queue( void* data, unsigned char size ) {
@@ -170,7 +308,7 @@ void trust_handler( client_t *p_client, char* data, int size ) {
   if( size == 0 ) return;
   data[ size ] = 0;
   p_client->trust_cli++;
-  printf( "KiwiRayServer [info]: Client %i says: %s\n", p_client->index, data );  
+  printf( "RoboCortex [info]: Client %i says: %s\n", p_client->index, data );  
   //trust_queue( data, size ); // TODO: remove
   for( n = 0; n < size - 1; n++ ) {
     if( data[ n ] == ':' ) {
@@ -243,7 +381,7 @@ static client_t *clients_add( NET_ADDR *client ) {
   	// Find free client entry
     if( !clients[ n ].timeout ) {
     	// Add client to table
-      printf( "KiwiRayServer [info]: Client %i connected\n", n );
+      printf( "RoboCortex [info]: Client %i connected\n", n );
       memcpy( &clients[ n ].client, client, sizeof( NET_ADDR ) );
       clients[ n ].next = NULL;
       clients[ n ].prev = client_last;
@@ -298,7 +436,7 @@ static void clients_tick() {
   	if( clients[ n ].timeout ) {
   		clients[ n ].timeout--;
   		if( clients[ n ].timeout == 0 ) {
-        printf( "KiwiRayServer [info]: Client %i disconnected (ping timeout)\n", n );
+        printf( "RoboCortex [info]: Client %i disconnected (ping timeout)\n", n );
   			if( clients[ n ].prev ) clients[ n ].prev->next = clients[ n ].next;
   			if( clients[ n ].next ) clients[ n ].next->prev = clients[ n ].prev;
   		}
@@ -309,7 +447,7 @@ static void clients_tick() {
     if( client_first->glitch ) client_first->glitch--;
     if( --client_first->timer == 0 || client_first->timeout == 0 ) {
     	// Time for client switch
-      printf( "KiwiRayServer [info]: Client %i disconnected (time up)\n", client_first->index );
+      printf( "RoboCortex [info]: Client %i disconnected (time up)\n", client_first->index );
       client_first = client_first->next;
     	emoticon = EMO_IDLE;
       if( client_first ) {
@@ -370,24 +508,24 @@ int kiwiray( void *unused ) {
   };
 
   // Initial serial startup
-  b_working = ( serial_open( p_serdev ) == 0 );
+  b_working = ( serial_open( serdev ) == 0 );
   if( !b_working ) {
-    printf( "KiwiRayServer [warning]: Unable to open %s, disabling serial\n", p_serdev );
+    printf( "RoboCortex [warning]: Unable to open %s, disabling serial\n", serdev );
     return( 0 );
   }
   b_working = !serial_params( "115200,n,8,1" );
   if( !b_working ) {
-    printf( "KiwiRayServer [warning]: Unable to configure %s, disabling serial\n", p_serdev );
+    printf( "RoboCortex [warning]: Unable to configure %s, disabling serial\n", serdev );
     serial_close();
     return( 0 );
   }
   while( 1 ) {
     // Re-open on errors
     if( !b_working ) {
-      printf( "KiwiRayServer [warning]: Serial port problem, re-opening...\n" );
+      printf( "RoboCortex [warning]: Serial port problem, re-opening...\n" );
       SDL_Delay( 5000 );
       serial_close();
-      b_working = ( serial_open( p_serdev ) == 0 );
+      b_working = ( serial_open( serdev ) == 0 );
       if( b_working ) b_working = serial_params( "115200,n,8,1" );
     }
     p_pkt[ 1 ] = 0x00;               // Drive XYZ
@@ -493,27 +631,68 @@ int receiver( void *unused ) {
   }
 }
 
-void terminate( int z ) {
-  printf( "\nKiwiRayServer [info]: SIGINT received, shutting down...\n\n" );
+/*
+static void inline rect_set( rect_t *rect, int x, int y, int w, int h ) {
+  rect->x = x;
+  rect->y = y;
+  rect->w = w;
+  rect->h = h;
+}
+
+static void convert_blt( int dst_w, int dst_h, const int dst_stride[], uint8_t* const dst[], rect_t *dst_rect, int src_w, int src_h, int src_stride, uint8_t *src, rect_t *src_rect ) {
+  uint8_t* r_dst[ 3 ];
+  const uint8_t *r_src;
+  struct SwsContext* bltCtx;
+  bltCtx = sws_getContext( src_rect->w, src_rect->h, PIX_FMT_BGR24, dst_rect->w, dst_rect->h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
+  r_src = src + ( src_stride * src_rect->y ) + ( src_rect->x * 3 );
+  r_dst[ 0 ] = dst[ 0 ] + ( dst_rect->y * dst_stride[ 0 ] ) + dst_rect->x;
+  r_dst[ 1 ] = dst[ 1 ] + ( ( dst_rect->y >> 1 ) * dst_stride[ 1 ] ) + ( dst_rect->x >> 1 );
+  r_dst[ 2 ] = dst[ 2 ] + ( ( dst_rect->y >> 1 ) * dst_stride[ 1 ] ) + ( dst_rect->x >> 1 );
+  sws_scale( bltCtx, &r_src, &src_stride, 0, src_rect->h, r_dst, dst_stride );
+  sws_freeContext( bltCtx );
+}
+*/
+
+// Convert, crop, scale and blit all BGR24 capture sources onto YUV420P destination
+static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
+  uint8_t* r_dst[ 3 ];
+  const uint8_t *r_src;
+  int src_stride;
+  int n;
+  for( n = 0; n < cap_count; n++ ) {
+    src_stride = cap[ n ].w * 3;
+    r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );  
+    r_dst[ 0 ] = dst[ 0 ] + ( cap[ n ].dst.y * dst_stride[ 0 ] ) + cap[ n ].dst.x;
+    r_dst[ 1 ] = dst[ 1 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
+    r_dst[ 2 ] = dst[ 2 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
+    sws_scale( cap[ n ].swsCtx, &r_src, &src_stride, 0, cap[ n ].src.h, r_dst, dst_stride );
+  }
+}
+
+static void terminate( int z ) {
+  printf( "\nRoboCortex [info]: SIGINT received, shutting down...\n\n" );
   quit = 1;
 }
 
 // Cleanup
 void encoder_close()   { x264_encoder_close( encoder );                }
 void picture_close()   { x264_picture_clean( &pic_in );                }
-void sws_close()       { sws_freeContext( convertCtx );                }
 void trust_mx_close()  { SDL_DestroyMutex( trust_mx );                 }
 void client_mx_close() { SDL_DestroyMutex( client_mx );                }
 void kiwiray_close()   { SDL_KillThread( hKiwiray );                   }
 void receiver_close()  { SDL_KillThread( hReceiver );                  }
-void close_message()   { printf( "KiwiRayServer [info]: KTHXBYE!\n" ); }
+void close_message()   { printf( "RoboCortex [info]: KTHXBYE!\n" ); }
+void sws_close() {
+  int n;
+  for( n = 0; n < cap_count; n++ ) {
+    if( cap[ n ].swsCtx != NULL ) sws_freeContext( cap[ n ].swsCtx );
+    cap[ n ].swsCtx = NULL;
+  }
+}
 
 int main( int argc, char *argv[] ) {
   int            n;
 	int            cap_w, cap_h;
-  int            stride;
-  int            port = DEFAULT_PORT;
-  const uint8_t *data;
   x264_param_t   param;
   x264_nal_t    *nals;
   int            i_nals;
@@ -530,9 +709,16 @@ int main( int argc, char *argv[] ) {
   FILE          *f;
 #endif
 
-  printf( "KiwiRayServer [info]: OHAI!\n\n" );
+  printf( "RoboCortex [info]: OHAI!\n\n" );
 
   atexit( close_message );
+
+  read_rc( fopen( "srv.rc", "r" ) );
+
+  if( cap_count == 0 ) {
+    printf( "RoboCortex [error]: No capture sources\n" );
+    exit( EXIT_NOSOURCE );
+  }
 
   clients_init();
   
@@ -540,23 +726,20 @@ int main( int argc, char *argv[] ) {
 
   // Initialize network
   if( net_init() < 0 ) {
-    fprintf( stderr, "KiwiRayServer [error]: Network initialization failed\n" );
+    fprintf( stderr, "RoboCortex [error]: Network initialization failed\n" );
     exit( EXIT_NETWORK );
   } else {
   	
     // Aquire socket
     if( net_sock( &h_sock ) < 0 ) {
-      fprintf( stderr, "KiwiRayServer [error]: Socket aquire failed\n" );
+      fprintf( stderr, "RoboCortex [error]: Socket aquire failed\n" );
       exit( EXIT_SOCKET );
     } else {
 
-		  // Port from args
-		  if( argc > 3 ) port = atoi( argv[ 3 ] );
-    	
       // Bind socket to PORT
       net_addr_init( &srv_addr, NET_ADDR_ANY, port );
       if( net_bind( &h_sock, &srv_addr ) < 0 ) {
-        fprintf( stderr, "KiwiRayServer [error]: Socket bind failed\n" );
+        fprintf( stderr, "RoboCortex [error]: Socket bind failed\n" );
         exit( EXIT_BIND );
       }
     }
@@ -569,32 +752,40 @@ int main( int argc, char *argv[] ) {
     exit( EXIT_AUDIO );
   }
 
-  // Initialize video capture device
-  cap_w = CAP_WIDTH;
-  cap_h = CAP_HEIGHT;
-  if( argc > 1 ) {
-    if( capture_init( argv[ 1 ], STREAM_FPS, &cap_w, &cap_h ) < 0 ) {
-      fprintf( stderr, "KiwiRayServer [error]: Unable to open capture device %s\n", argv[ 1 ] );
+  // Initialize capture sources
+  atexit( capture_close );
+  for( n = 0; n < cap_count; n++ ) {
+    cap_w = cap[ n ].w;
+    cap_h = cap[ n ].h;
+    if( capture_init( cap[ n ].device, stream_fps, &cap_w, &cap_h ) < 0 ) {
+      fprintf( stderr, "RoboCortex [error]: Unable to open capture device %s\n", cap[ n ].device );
       exit( EXIT_CAPTURE );
     }
-    if( cap_w != CAP_WIDTH || cap_h != CAP_HEIGHT ) {
-      printf( "KiwiRayServer [warning]: Captured video is %ix%i, not %ix%i\n\n", cap_w, cap_h, CAP_WIDTH, CAP_HEIGHT );
+    if( cap_w != cap[ n ].w || cap_h != cap[ n ].h ) {
+      fprintf( stderr, "RoboCortex [error]: Capture device %s does not support %ix%i\n", cap[ n ].device, cap[ n ].w, cap[ n ].h );
+      exit( EXIT_CAPTURE );
     }
-    atexit( capture_close );
-  } else {
-    capture_init( NULL, STREAM_FPS, &cap_w, &cap_h );
-    exit( EXIT_OK );
+  }
+  
+  // Initialize scaling and conversion contexts
+  atexit( sws_close );
+  for( n = 0; n < cap_count; n++ ) {
+    cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_BGR24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
+    if( cap[ n ].swsCtx == NULL ) {
+      printf( "RoboCortex [error]: Unable to initialize conversion context\n" );
+      exit( EXIT_SWSCALE );
+    }
   }
 
   // Initialize encoder
   x264_param_default_preset( &param, "medium", "zerolatency" );
   
-  param.i_width   = STREAM_WIDTH;
-  param.i_height  = STREAM_HEIGHT;
-  param.i_fps_num = STREAM_FPS;
+  param.i_width   = stream_w;
+  param.i_height  = stream_h;
+  param.i_fps_num = stream_fps;
   
   // Settings as explained by http://x264dev.multimedia.cx/archives/249
-  
+    
   x264_param_parse( &param, "slice-max-size", "8192" ); /* Practically disables slicing.
   																											   Slicing is the splitting of frame data into
   																											   a series of NALs, each having a maximum size
@@ -627,16 +818,6 @@ int main( int argc, char *argv[] ) {
   																												 the picture, and takes a lot more space
   																												 than P/B (differential) frames. */
 
-/*x264_param_parse( &param, "no-cabac", NULL );			  *//* Disable CABAC.
-  																												 It's been said it's unsuitable for this
-  																												 type of H.264 application. */
-  																										  /* Further investigation shows that this is
-  																										     not correct, using CABAC will not cause
-  																										     performance spikes in this instance, and
-  																										     will offload some of the encoders work
-  																										     onto the decoder resulting in better
-  																										     server performance */
-  
   param.b_annexb = 1;																		/* Use Annex-B packaging.
   																											   This appends a marker at the start of
   																											   each NAL unit. */
@@ -653,34 +834,22 @@ int main( int argc, char *argv[] ) {
   atexit( encoder_close );
   
   // Allocate I420 picture
-  if( x264_picture_alloc( &pic_in, X264_CSP_I420, STREAM_WIDTH, STREAM_HEIGHT ) == 0 ) {
+  if( x264_picture_alloc( &pic_in, X264_CSP_I420, stream_w, stream_h ) == 0 ) {
     atexit( picture_close );
   } else {
     exit( EXIT_PICTURE );
   }
-
-  // Initialize color space convertor
-  convertCtx = sws_getContext( cap_w, cap_h, PIX_FMT_BGR24, STREAM_WIDTH, STREAM_HEIGHT, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
-  if( convertCtx ) {
-    atexit( sws_close );
-  } else {
-    fprintf( stderr, "KiwiRayServer [error]: Cannot initialize the conversion context" );
-    exit( EXIT_SWSCALE );
-  }
-
-  stride = cap_w * 3; // RGB stride, width * 3
 
   // Create receiving thread
   hReceiver = SDL_CreateThread( receiver, NULL );
   atexit( receiver_close );
   
   // Initialize serial
-  if( argc > 2 ) {
-    p_serdev = argv[ 2 ];
+  if( serdev[ 0 ] != 0 ) {
     hKiwiray = SDL_CreateThread( kiwiray, NULL );
     atexit( kiwiray_close );
   } else {
-    printf( "KiwiRayServer [warning]: Argument 2 missing, disabling serial\n" );
+    printf( "RoboCortex [warning]: Configuration - comms missing, disabling serial\n" );
   }
 
 #ifndef DISABLE_SPEECH
@@ -688,7 +857,7 @@ int main( int argc, char *argv[] ) {
   speech_queue( "INITIALIZED AND READY FOR CONNECTION" );
 #endif
 
-  printf( "\nKiwiRayServer [info]: listening on port %i...\n", port );
+  printf( "\nRoboCortex [info]: listening on port %i...\n", port );
 
   trust_mx = SDL_CreateMutex();
   atexit( trust_mx_close );
@@ -705,14 +874,14 @@ int main( int argc, char *argv[] ) {
 
   	speech_poll();
 
-    // Fetch latest picture from capture device
-    data = ( uint8_t * )capture_fetch( 0 );
+    // Fetch latest picture from capture devices
+    for( n = 0; n < cap_count; n++ ) {
+      cap[ n ].data = ( uint8_t * )capture_fetch( n );
+    }
 
 		// Scaling and coding as explained by http://stackoverflow.com/questions/2940671/how-to-encode-series-of-images-into-h264-using-x264-api-c-c
-
-    // Convert to YUV I420
-    sws_scale( convertCtx, &data, &stride, 0, cap_h, pic_in.img.plane, pic_in.img.i_stride );
-
+		cap_process( pic_in.img.i_stride, pic_in.img.plane );
+    
     // Encode frame    
     if( do_intra ) {
       do_intra = 0;
@@ -846,19 +1015,19 @@ int main( int argc, char *argv[] ) {
       integrate_r = 0;
     }
 
-    // Delay 1/STREAM_FPS seconds, constantly correct for processing overhead
+    // Delay 1/stream_fps seconds, constantly correct for processing overhead
     time_diff = SDL_GetTicks() - time_target;
-    if( time_diff > 1000 / STREAM_FPS ) { 
+    if( time_diff > 1000 / stream_fps ) { 
       time_diff = 0;
       time_target = SDL_GetTicks(); // Reset on overflow
-      printf( "KiwiRayServer [warning]: Encoder cannot keep up with desired FPS\n" );
+      printf( "RoboCortex [warning]: Encoder cannot keep up with desired FPS\n" );
     }
     if( time_diff < 0 ) {
       time_diff = 0;
-      printf( "KiwiRayServer [error]: SDL_Delay returns too fast\n" );
+      printf( "RoboCortex [error]: SDL_Delay returns too fast\n" );
     }
-    time_target += 1000 / STREAM_FPS;
-    SDL_Delay( ( 1000 / STREAM_FPS ) - time_diff );
+    time_target += 1000 / stream_fps;
+    SDL_Delay( ( 1000 / stream_fps ) - time_diff );
 
     // Tick client timers
     clients_tick();
@@ -869,8 +1038,8 @@ int main( int argc, char *argv[] ) {
   fclose( f );
 #endif
 
-  printf( "KiwiRayServer [info]: NAL units: %i, %i bytes\n", nalc, nalb );
-  printf( "KiwiRayServer [info]: Largest packet: %i\n\n", pt );
+  printf( "RoboCortex [info]: NAL units: %i, %i bytes\n", nalc, nalb );
+  printf( "RoboCortex [info]: Largest packet: %i\n\n", pt );
 
   exit( EXIT_OK );
 }
