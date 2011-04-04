@@ -3,7 +3,7 @@
 #include <libswscale/swscale.h>
 #include <libavcodec/avcodec.h>
 #include "oswrap.h"
-#include "kiwiray.h"
+#include "robocortex.h"
 #include "speech.h"
 #include "cli_term.h"
 

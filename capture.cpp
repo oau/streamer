@@ -71,7 +71,7 @@ static int height;
 //static unsigned char * buffer;
 typedef struct {
   unsigned char *buffer;
-  struct CvCapture *capture;  
+  struct CvCapture *capture;
 } capture_t;
 
 static capture_t devs[ MAX_DEVICES ];

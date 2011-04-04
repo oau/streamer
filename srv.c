@@ -6,7 +6,7 @@
 #include <libswscale/swscale.h>
 #include <x264.h>
 #include "oswrap.h"
-#include "kiwiray.h"
+#include "robocortex.h"
 #include "speech.h"
 #include "sdl_console.h"
 
