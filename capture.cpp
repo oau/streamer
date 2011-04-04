@@ -1,68 +1,75 @@
+#include <stdio.h>
 #define MAX_DEVICES 10
 
 #ifdef _WIN32
-#include <stdio.h>
 #include <videoinput.h>
 
-videoInput VI;
+typedef struct {
+  unsigned char dev;
+  videoInput VI;
+} capture_t;
+
 
 static int width;;
 static int height;
-static int devs[ MAX_DEVICES ];
+static capture_t *devs[ MAX_DEVICES ];
 static int devs_count = 0;
 static unsigned char * buffer;
 
 extern "C" int capture_init( char *device, int fps, int *w, int *h ) {
   int size, dev;
+  capture_t *p_dev = new capture_t();
   dev = -1;
   if( device ) {
   	if( strlen( device ) ) {
   		dev = atoi( device );
   	}
   }
+  
   //Prints out a list of available devices and returns num of devices found
   if( dev >= 0 ) {
-    if( !VI.setupDevice( dev, *w, *h ) ) return( -1 );
+    if( !p_dev->VI.setupDevice( dev, *w, *h ) ) return( -1 );
   } else {
-    int numDevices = VI.listDevices();    
+    int numDevices = p_dev->VI.listDevices();    
     return( -1 );
   }
   
-  VI.setIdealFramerate( dev, fps );	
+  p_dev->VI.setIdealFramerate( dev, fps );	
   
   // Automatically reconnect on freeze, may fix bugs with some devices/drivers
-  VI.setAutoReconnectOnFreeze( dev, true, 25 );
+  p_dev->VI.setAutoReconnectOnFreeze( dev, true, 25 );
   
-  width   = VI.getWidth ( dev );
-  height  = VI.getHeight( dev );
-  size    = VI.getSize  ( dev );
+  width   = p_dev->VI.getWidth ( dev );
+  height  = p_dev->VI.getHeight( dev );
+  size    = p_dev->VI.getSize  ( dev );
   *w = width;
   *h = height;
   
   buffer = new unsigned char[ size ];
   
-  devs[ devs_count ] = dev;
+  p_dev->dev = dev;
+  devs[ devs_count ] = p_dev;
   
   return( devs_count++ );
 }
 
 extern "C" unsigned char * capture_fetch( int dev ) {
-  if( VI.isFrameNew( dev ) ) {
-    VI.getPixels( devs[ dev ], buffer, false, true ); // BGR, flipped
+  if( devs[ dev ]->VI.isFrameNew( dev ) ) {
+    devs[ dev ]->VI.getPixels( devs[ dev ]->dev, buffer, false, true ); // BGR, flipped
   }
   return( buffer );
 }
 
 extern "C" void capture_close() {
-	unsigned int n;
-	for( n = 0; n < devs_count; n++ ) {
-  	VI.stopDevice( devs[ n ] );	
+	unsigned int dev;
+	for( dev = 0; dev < devs_count; dev++ ) {
+  	devs[ dev ]->VI.stopDevice( devs[ dev ]->dev );	
+  	devs[ dev ] = NULL;
   }
   devs_count = 0;
 }
 
 #else
-#include <stdio.h>
 #include "opencv/cv.h"
 #include "opencv/highgui.h"
 

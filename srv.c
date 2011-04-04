@@ -34,8 +34,8 @@
 #define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
 
 // Capture (device may not be capable and return another size)
-#define CAP_WIDTH           640 // Requested capture width
-#define CAP_HEIGHT          480 // Requested capture height
+#define CAP_WIDTH           320 // Requested capture width
+#define CAP_HEIGHT          240 // Requested capture height
 
 // Streaming
 #define STREAM_WIDTH        320 // Width of streamed video
