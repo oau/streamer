@@ -30,7 +30,7 @@
 
 // Protocol
 #define CORTEX_VERSION        2 // Protocol revision
-#define DEFAULT_PORT       6979 // Default port
+#define PORT               6979 // Default port
 #define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
 
 // Capture (device may not be capable and return another size)
@@ -112,14 +112,15 @@ enum exitcode_e {
   EXIT_SWSCALE,
   EXIT_PICTURE,
   EXIT_AUDIO,
-  EXIT_NOSOURCE
+  EXIT_NOSOURCE,
+  EXIT_CONFIG
 };
 
 // Sockets
 static NET_SOCK h_sock;
 static NET_ADDR srv_addr;
 static NET_ADDR cli_addr;
-static int port = DEFAULT_PORT;
+static int port = PORT;
 
 // Locals
 static int quit     = 0; // Time to quit (SIGINT etc.)
@@ -145,6 +146,9 @@ static char pkt_ctrl[ 4 ] = "CTRL";
 static char pkt_lost[ 4 ] = "LOST";
 static char pkt_full[ 4 ] = "FULL";
 static char pkt_quit[ 4 ] = "QUIT";
+
+// Default configuration file
+static char fn_rc[] = "srv.rc";
 
 // Drive parameters
 static          char drive_x; // Strafe
@@ -631,28 +635,6 @@ int receiver( void *unused ) {
   }
 }
 
-/*
-static void inline rect_set( rect_t *rect, int x, int y, int w, int h ) {
-  rect->x = x;
-  rect->y = y;
-  rect->w = w;
-  rect->h = h;
-}
-
-static void convert_blt( int dst_w, int dst_h, const int dst_stride[], uint8_t* const dst[], rect_t *dst_rect, int src_w, int src_h, int src_stride, uint8_t *src, rect_t *src_rect ) {
-  uint8_t* r_dst[ 3 ];
-  const uint8_t *r_src;
-  struct SwsContext* bltCtx;
-  bltCtx = sws_getContext( src_rect->w, src_rect->h, PIX_FMT_BGR24, dst_rect->w, dst_rect->h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
-  r_src = src + ( src_stride * src_rect->y ) + ( src_rect->x * 3 );
-  r_dst[ 0 ] = dst[ 0 ] + ( dst_rect->y * dst_stride[ 0 ] ) + dst_rect->x;
-  r_dst[ 1 ] = dst[ 1 ] + ( ( dst_rect->y >> 1 ) * dst_stride[ 1 ] ) + ( dst_rect->x >> 1 );
-  r_dst[ 2 ] = dst[ 2 ] + ( ( dst_rect->y >> 1 ) * dst_stride[ 1 ] ) + ( dst_rect->x >> 1 );
-  sws_scale( bltCtx, &r_src, &src_stride, 0, src_rect->h, r_dst, dst_stride );
-  sws_freeContext( bltCtx );
-}
-*/
-
 // Convert, crop, scale and blit all BGR24 capture sources onto YUV420P destination
 static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
   uint8_t* r_dst[ 3 ];
@@ -681,7 +663,7 @@ void trust_mx_close()  { SDL_DestroyMutex( trust_mx );                 }
 void client_mx_close() { SDL_DestroyMutex( client_mx );                }
 void kiwiray_close()   { SDL_KillThread( hKiwiray );                   }
 void receiver_close()  { SDL_KillThread( hReceiver );                  }
-void close_message()   { printf( "RoboCortex [info]: KTHXBYE!\n" ); }
+void close_message()   { printf( "\nRoboCortex [info]: KTHXBYE!\n" ); }
 void sws_close() {
   int n;
   for( n = 0; n < cap_count; n++ ) {
@@ -705,15 +687,25 @@ int main( int argc, char *argv[] ) {
   int            temp;
   Uint32         time_target;
   Sint32         time_diff;
+  char          *rc_file = fn_rc;
+  FILE          *cf;
 #ifdef SAVE_STREAM
-  FILE          *f;
+  FILE          *sf;
 #endif
 
   printf( "RoboCortex [info]: OHAI!\n\n" );
 
   atexit( close_message );
 
-  read_rc( fopen( "srv.rc", "r" ) );
+  if( argc > 1 ) rc_file = argv[ 1 ];
+
+  cf = fopen( rc_file, "r" );
+  if( cf == NULL ) {
+    printf( "RoboCortex [error]: Cannot open configuration file %s\n", rc_file );
+    exit( EXIT_CONFIG );
+  }
+  
+  read_rc( cf );
 
   if( cap_count == 0 ) {
     printf( "RoboCortex [error]: No capture sources\n" );
@@ -865,7 +857,7 @@ int main( int argc, char *argv[] ) {
   atexit( client_mx_close );
 
 #ifdef SAVE_STREAM
-  f = fopen( SAVE_STREAM, "wb" );
+  sf = fopen( SAVE_STREAM, "wb" );
 #endif
 
   time_target = SDL_GetTicks();
@@ -909,7 +901,7 @@ int main( int argc, char *argv[] ) {
     }
 
 #ifdef SAVE_STREAM
-    fwrite( p_buffer, 1, i_buffer, f );
+    fwrite( p_buffer, 1, i_buffer, sf );
 #endif
 
     // Largest packet
@@ -1035,7 +1027,7 @@ int main( int argc, char *argv[] ) {
   }
 
 #ifdef SAVE_STREAM
-  fclose( f );
+  fclose( sf );
 #endif
 
   printf( "RoboCortex [info]: NAL units: %i, %i bytes\n", nalc, nalb );
