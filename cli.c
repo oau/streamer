@@ -6,10 +6,15 @@
 #include "robocortex.h"
 #include "speech.h"
 #include "cli_term.h"
+#include "plugins/cli.h"
+#include "sdl_console.h"
+
+// Plugins
+#define MAX_PLUGINS          10
+extern pluginclient_t *kiwiray_open( pluginhost_t* );
 
 // Protocol
 #define MAX_RETRY             5 // Maximum number of retransmissions of lost packets
-#define CORTEX_VERSION        2 // Current protoco
 #define DEFAULT_PORT       6979 // Default port
 
 // Configuration
@@ -49,7 +54,7 @@ enum kbd_layout_e {
 };
 
 // Texts
-static char text_contact[] =  "CONTACTING KIWIRAY1...";
+static char text_contact[] =  "ESTABLISHING CORTEX...";
 static char text_error[]   =  "   CONNECTION ERROR   ";
 static char text_queued[] =   "  QUEUED FOR CONTROL  ";
 static char text_full[] =     " QUEUE IS FULL, SORRY ";
@@ -72,34 +77,57 @@ static char pkt_full[ 4 ] = "FULL";
 static char pkt_quit[ 4 ] = "QUIT";
 
 // Locals
-static   disp_data_t  disp_data;                       // Data from latest DISP packet
-static   SDL_Surface *logo;                            // Image resources
-static   SDL_Surface *help;
-static      NET_ADDR  srv_addr;                        // Server address
-static           int  port = DEFAULT_PORT;             // Server port
-static   SDL_Surface *screen;                          // Screen surface
-static           int  screen_w, screen_h, screen_bpp;  // Screen parameters
-static      NET_SOCK  h_sock;                          // Socket handle
-static  linked_buf_t *p_buffer_last;                   // Decoding buffer
-static  linked_buf_t *p_buffer_first;
-static volatile  int  state = STATE_CONNECTING;        // Client state
-static volatile  int  retry = 0;                       // Used for retransmissions and timeouts
-static           int  queue_time;                      // Time left before FUN
-static  linked_buf_t *trust_first = NULL;              // Non-lossy packet buffer
-static  linked_buf_t *trust_last = NULL;
-static unsigned char  trust_srv = 0xFF;                // Non-lossy transmission counters
-static unsigned char  trust_cli = 0x00;
-static     SDL_mutex *trust_mx;                        // Non-lossy buffer access mutex
-static           int  trust_timeout = 0;               // Non-lossy retransmission timeout
-static           int  b_cursor_grabbed;                // Is cursor currently "grabbed"?
-static         Uint8  draw_red, draw_green, draw_blue; // Drawing color
-static unsigned char  layout = KL_QWERTY;
-static        SDLKey  keymap[ KM_SIZE ];               // Keyboard remapping
-static  unsigned int  message_timeout = 0;
+static    disp_data_t  disp_data;                       // Data from latest DISP packet
+static    SDL_Surface *spr_logo;                            // Image resources
+static    SDL_Surface *spr_box; 
+static       NET_ADDR  srv_addr;                        // Server address
+static            int  port = DEFAULT_PORT;             // Server port
+static    SDL_Surface *screen;                          // Screen surface
+static            int  screen_w, screen_h, screen_bpp;  // Screen parameters
+static       NET_SOCK  h_sock;                          // Socket handle
+static   linked_buf_t *p_buffer_last;                   // Decoding buffer
+static   linked_buf_t *p_buffer_first;
+static  volatile  int  state = STATE_CONNECTING;        // Client state
+static  volatile  int  retry = 0;                       // Used for retransmissions and timeouts
+static            int  queue_time;                      // Time left before FUN
+static   linked_buf_t *trust_first = NULL;              // Non-lossy packet buffer
+static   linked_buf_t *trust_last = NULL;
+static  unsigned char  trust_srv = 0xFF;                // Non-lossy transmission counters
+static  unsigned char  trust_cli = 0x00;
+static      SDL_mutex *trust_mx;                        // Non-lossy buffer access mutex
+static            int  trust_timeout = 0;               // Non-lossy retransmission timeout
+static            int  b_cursor_grabbed;                // Is cursor currently "grabbed"?
+static          Uint8  draw_red, draw_green, draw_blue; // Drawing color
+static  unsigned char  layout = KL_QWERTY;
+static         SDLKey  keymap[ KM_SIZE ];               // Keyboard remapping
+static   unsigned int  message_timeout = 0;
+static    ctrl_data_t  ctrl;                            // Part of CTRL packet
+
+// Help texts
+static           char  help[ 32 ][ 33 ] = {
+  { "CONTROLS: WASD + MOUSE" },
+  { "L: TOGGLE QWERTY, DVORAK, AZERTY" },
+  { "H: SHOW/HIDE HELP" },
+  { "F: TOGGLE FULL-SCREEN" },
+  { "   WHEN IN WINDOWED MODE, USED" },
+  { "   MOUSE-LEFT TO GRAB/UNGRAB" },
+  { "ESCAPE: QUIT" },
+  { "" },
+};
+static  unsigned char help_count = 8;
+
+// Plugins
+static   pluginhost_t  host;
+static pluginclient_t *plug;
+static pluginclient_t *plugs[ MAX_PLUGINS ];
+static            int  plugs_count;
+static pluginclient_t *cursor_hook;
+static pluginclient_t *keyboard_hook;
+static pluginclient_t *keyboard_binds[ SDLK_LAST ];
 
 // Display message
 static void message( char* text ) {
-  term_write( 1, 27, text, 1 );
+  term_write( 1, 27, text, FONT_RED );
   message_timeout = 125;
 }
 
@@ -133,13 +161,15 @@ static void set_layout( unsigned char new_layout ) {
 }
 
 // Queues a packet for trusted (non-lossy) transmission
-static void trust_queue( void* data, unsigned char size ) {
+static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
   linked_buf_t *p_trust;
   p_trust = malloc( sizeof( linked_buf_t ) );
   if( p_trust ) {
     // Create packet
-    memcpy( p_trust->data, data, size );
-    p_trust->size = size;
+    memcpy( p_trust->data, &ident, 4 );
+    p_trust->data[ 4 ] = size;
+    memcpy( p_trust->data + 5, data, size );
+    p_trust->size = size + 5;
     p_trust->next = NULL;
     // Insert into linked list
     SDL_mutexP( trust_mx );
@@ -155,41 +185,25 @@ static void trust_queue( void* data, unsigned char size ) {
 
 // Handles trusted data packets
 void trust_handler( char* data, int size ) {
+  int len, pid;
+  uint32_t ident;
   if( size == 0 ) return;
   trust_srv++;
-  //data[ size ] = 0;
-  //term_write( 2, 10, data, 0 );
-}
-
-// Convert unicode to ascii - kind of a hack
-static char UnicodeChar( int uni ){
-  #define INTERNATIONAL_MASK 0xFF80
-  #define UNICODE_MASK       0x007F
-  if( uni == 0 ) return( 0 );
-  if( ( uni & INTERNATIONAL_MASK ) == 0 ) {
-    return( ( char )( toupper( uni & UNICODE_MASK ) ) );
-  } else {
-    return( '?' );
+  // Pass data to plugins
+  while( size > 5 ) {
+    ident = *( uint32_t* )data; data += 4;
+    len = *data++;
+    size -= 5;
+    if( size >= len ) {
+      // plugin->recv
+      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ ) {
+        if( plug->ident == ident ) {
+          if( plug->recv ) plug->recv( data, len );
+        }
+      }
+    }
+    size -= len;
   }
-}
-
-// Initialize graphical resources   
-static void resource_init() {
-  SDL_Surface* temp;
-  temp = SDL_LoadBMP( "logo.bmp" );
-  if( !temp ) printf( "KiwiDriveClient [error]: Unable to load logo.bmp\n" );
-  logo = SDL_DisplayFormat( temp );
-  SDL_FreeSurface( temp );
-  temp = SDL_LoadBMP( "help.bmp" );
-  if( !temp ) printf( "KiwiDriveClient [error]: Unable to load help.bmp\n" );
-  help = SDL_DisplayFormat( temp );
-  SDL_FreeSurface( temp );
-  SDL_SetColorKey( help, SDL_SRCCOLORKEY, SDL_MapRGB( screen->format, 0xFF, 0x00, 0xFF ) );
-}
-
-// Free graphical resources
-static void resource_clean() {
-    SDL_FreeSurface( logo );
 }
 
 static void SetColor( Uint8 red, Uint8 green, Uint8 blue ) {
@@ -289,6 +303,135 @@ static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
    SDL_UnlockSurface( screen );
 }
 
+static int plug_keybind( int key ) {
+  // TODO: block reserved keys
+  if( keyboard_binds[ key ] == NULL ) {
+    keyboard_binds[ key ] = plug;
+    return( 1 );
+  }
+  return( 0 );
+}
+
+static void plug_keyfree( int key ) {
+  if( keyboard_binds[ key ] == plug ) keyboard_binds[ key ] = NULL;
+}
+
+static int plug_keyhook() {
+  if( keyboard_hook == NULL ) {
+    ctrl.ctrl.kb = 0;
+    keyboard_hook = plug;
+    return( 1 );
+  }
+  return( 0 );
+}
+
+static void plug_keyrelease() {
+  if( keyboard_hook == plug ) keyboard_hook = NULL;
+}
+
+static int plug_csrhook( int show ) {
+  if( cursor_hook == NULL ) {
+    cursor_hook = plug;
+    SDL_ShowCursor( show ? SDL_ENABLE : SDL_DISABLE );
+    return( 1 );
+  }
+  return( 0 );
+}
+
+static void plug_csrrelease() {
+  if( cursor_hook == plug ) {
+    cursor_hook = NULL;
+    SDL_ShowCursor( b_cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
+  }
+}
+
+static void plug_csrmove( int x, int y ) {
+  if( cursor_hook == plug ) SDL_WarpMouse( x, y );
+}
+
+static void plug_send( void *data, unsigned char size ) {
+  trust_queue( plug->ident, data, size );
+}
+
+static void plug_help( char *text ) {
+  if( strlen( text ) <= 32 ) {
+    strcpy( help[ help_count++ ], text );
+  }
+}
+
+static void plug_wu( int x0, int y0, int x1, int y1, uint32_t color ) {
+  SetColor( color >> 16, color >> 8, color );
+  DrawWuLine( x0, y0, x1, y1 );
+}
+
+static void load_plugins() {
+  int pid;
+  host.key_bind         = plug_keybind;
+  host.key_free         = plug_keyfree;
+  host.keyboard_hook    = plug_keyhook;
+  host.keyboard_release = plug_keyrelease;
+  host.cursor_hook      = plug_csrhook;
+  host.cursor_release   = plug_csrrelease;
+  host.cursor_move      = plug_csrmove;
+  host.text_cins        = term_cins;
+  host.text_crem        = term_crem;
+  host.text_write       = term_write;
+  host.text_clear       = term_white;
+  host.text_valid       = term_knows;
+  host.server_send      = plug_send;
+  host.help_add         = plug_help;
+  host.speak_text       = speech_queue;
+  host.draw_wuline      = plug_wu;
+
+  printf( "RoboCortex [info]: Loading plugins...\n" );
+  // Load kiwiray plugin
+  plugs[ plugs_count++ ] = kiwiray_open( &host );
+  printf( "RoboCortex [info]: Initializing plugins...\n" );
+  // plugin->init
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ ) {
+    if( plug->init ) plug->init();
+  }
+  printf( "RoboCortex [info]: Plugins loaded and initialized\n" );
+}
+
+static void unload_plugins() {
+  int pid;
+  // plugin->close
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+    if( plug->close ) plug->close();
+}
+
+// Convert unicode to ascii - kind of a hack
+static char UnicodeChar( int uni ){
+  #define INTERNATIONAL_MASK 0xFF80
+  #define UNICODE_MASK       0x007F
+  if( uni == 0 ) return( 0 );
+  if( ( uni & INTERNATIONAL_MASK ) == 0 ) {
+    return( ( char )( toupper( uni & UNICODE_MASK ) ) );
+  } else {
+    return( '?' );
+  }
+}
+
+// Initialize graphical resources   
+static void resource_init() {
+  SDL_Surface* temp;
+  temp = SDL_LoadBMP( "logo.bmp" );
+  if( !temp ) printf( "RoboCortex [error]: Unable to load logo.bmp\n" );
+  spr_logo = SDL_DisplayFormat( temp );
+  SDL_FreeSurface( temp );
+  temp = SDL_LoadBMP( "box.bmp" );
+  if( !temp ) printf( "RoboCortex [error]: Unable to load box.bmp\n" );
+  spr_box = SDL_DisplayFormat( temp );
+  SDL_FreeSurface( temp );
+  SDL_SetColorKey( spr_box, SDL_SRCCOLORKEY, SDL_MapRGB( screen->format, 0xFF, 0x00, 0xFF ) );
+}
+
+// Free graphical resources
+static void resource_clean() {
+    SDL_FreeSurface( spr_logo );
+}
+
 // Grab the cursor (locks cursor to our app)
 static void cursor_grab( int b_grab ) {
   SDL_GrabMode ret; 
@@ -305,7 +448,7 @@ static void cursor_poll( long *ix, long *iy ) {
   int cx = 0, cy = 0;
   int warp = 0;
     
-  if( !b_cursor_grabbed ) ready = 0;
+  if( cursor_hook == NULL || !b_cursor_grabbed ) ready = 0;
   SDL_GetMouseState( &cx, &cy );
   if( ready ) {
     *ix += cx - lx;
@@ -328,20 +471,20 @@ static void cursor_poll( long *ix, long *iy ) {
 
 // Draws out the help screen
 void help_draw() {
-  term_write( 4, 11, "CONTROLS: WASD + MOUSE", 0 );
-  term_write( 4, 12, "L: TOGGLE QWERTY, DVORAK, AZERTY", 0 );
-  term_write( 4, 13, "H: SHOW/HIDE HELP", 0 );
-  term_write( 4, 14, "T: OPEN SPEECH/COMMAND PROMPT", 0 );
-  term_write( 4, 15, "F: TOGGLE FULL-SCREEN", 0 );
-  term_write( 4, 16, "   WHEN IN WINDOWED MODE, USED", 0 );
-  term_write( 4, 17, "   MOUSE-LEFT TO GRAB/UNGRAB", 0 );
-  term_write( 4, 18, "ESCAPE: QUIT", 0 );
+  unsigned char n;
+  unsigned char y = ( 30 - help_count ) >> 1;
+  for( n = 0; n < help_count; n++ ) {
+    term_write( 4, y + n, help[ n ], FONT_GREEN );
+  }
 }
 
 // Clears the help screen
 void help_clear() {
-  int n;
-  for( n = 11; n <= 18; n++ ) term_white( 4, n, 32 );
+  unsigned char n;
+  unsigned char y = ( 30 - help_count ) >> 1;
+  for( n = 0; n < help_count; n++ ) {
+    term_white( 4, y + n, 32 );
+  }
 }
 
 // Thread handles reception of UDP packets
@@ -387,7 +530,6 @@ static int receiver( void *unused ) {
           if( ( ( trust_srv + 1 ) & 0xFF ) == disp_data.trust_srv ) {
             trust_handler( p_buffer_last->data + 4 + sizeof( disp_data_t ), size - 4 - sizeof( disp_data_t ) );
           }
-
         }
         
       // HELO
@@ -430,13 +572,37 @@ static int receiver( void *unused ) {
   }
 }
 
+// Draws a popup-box
+static inline SDL_Rect *rect( SDL_Rect *r, int x, int y, int w, int h ) {
+  r->x = x; r->y = y; r->w = w; r->h = h;
+  return( r );
+}
+void draw_box( unsigned char x, unsigned char y, unsigned char w, unsigned char h ) {
+  SDL_Rect src, dst;
+  unsigned char xx, yy;
+  SDL_BlitSurface( spr_box, rect( &src, 0, 0, 32, 32 ), screen, rect( &dst, x << 4, y << 4, 32, 32 ) );
+  SDL_BlitSurface( spr_box, rect( &src, 48, 0, 32, 32 ), screen, rect( &dst, ( x + w - 2 ) << 4, y << 4, 32, 32 ) );
+  SDL_BlitSurface( spr_box, rect( &src, 0, 48, 32, 32 ), screen, rect( &dst, x << 4, ( y + h - 2 ) << 4, 32, 32 ) );
+  SDL_BlitSurface( spr_box, rect( &src, 48, 48, 32, 32 ), screen, rect( &dst, ( x + w - 2 ) << 4, ( y + h - 2 ) << 4, 32, 32 ) );
+  for( xx = x + 2; xx < x + w - 2; xx++ ) {
+    SDL_BlitSurface( spr_box, rect( &src, 32, 0, 16, 32 ), screen, rect( &dst, xx << 4, y << 4, 16, 16 ) );
+    SDL_BlitSurface( spr_box, rect( &src, 32, 48, 16, 32 ), screen, rect( &dst, xx << 4, ( y + h - 2 ) << 4, 16, 16 ) );
+  }
+  for( yy = y + 2; yy < y + h - 2; yy++ ) {
+    SDL_BlitSurface( spr_box, rect( &src, 0, 32, 32, 16 ), screen, rect( &dst, x << 4, yy << 4, 16, 16 ) );
+    SDL_BlitSurface( spr_box, rect( &src, 48, 32, 32, 16 ), screen, rect( &dst, ( x + w - 2 ) << 4, yy << 4, 16, 16 ) );
+    for( xx = x + 2; xx < x + w - 2; xx++ ) {
+      SDL_BlitSurface( spr_box, rect( &src, 32, 32, 16, 16 ), screen, rect( &dst, xx << 4, yy << 4 , 16, 16 ) );
+    }
+  }
+}
+
 int main( int argc, char *argv[] ) {
+  int                pid;                        // Plugin iteration
   int                temp;                       // Various uses
   int                statec = 0;                 // State counter, used for retransmissions
   int                laststate = -1;             // Used to detect state changes
-  char               p_text[ 256 ];              // Command text input
-  char               l_text = -1;                // Tracks size of p_text
-  char               c_text;                     // Used for unicode text input translation
+  char               ascii;                      // Used for unicode text input translation
   char               p_ctrl[ 8192 ];             // CTRL packet buffer
   int                i_ctrl;                     // Tracks size of p_ctrl
   AVCodecContext    *pCodecCtx;                  // FFMPEG codec context
@@ -452,28 +618,27 @@ int main( int argc, char *argv[] ) {
   Uint32             rmask, gmask, bmask, amask; // Masking (endianness)
   SDL_Event          event;                      // Events
   int                quit = 0;                   // Time to quit?
-  ctrl_data_t        ctrl;                       // Part of CTRL packet
   int                b_help = 0;                 // Help is displayed?
-  Uint32             time_target;
-  Sint32             time_diff;
+  Uint32             time_target;                // Timing target
+  Sint32             time_diff;                  // Timing differential
 
-  printf( "KiwiDriveClient [info]: OHAI!\n" );
+  printf( "RoboCortex [info]: OHAI!\n" );
 
   set_layout( KL_QWERTY );
 
   if( argc < 2 ) {
-    printf( "KiwiDriveClient [error]: Need to specify IP-address on command-line\n" );
+    printf( "RoboCortex [error]: Need to specify IP-address on command-line\n" );
     printf( "\n" );
     return( 1 );
   }
 
   if( net_init() < 0 ) {
-    printf( "KiwiDriveClient [error]: Network initialization failed\n" );
+    printf( "RoboCortex [error]: Network initialization failed\n" );
     return( 1 );
   }
 
   if( net_sock( &h_sock ) < 0 ) {
-    printf( "KiwiDriveClient [error]: Socket aquire failed\n" );
+    printf( "RoboCortex [error]: Socket aquire failed\n" );
     return( 1 );
   };
   
@@ -489,7 +654,7 @@ int main( int argc, char *argv[] ) {
   pCodec = avcodec_find_decoder( CODEC_ID_H264 );
   av_init_packet( &avpkt );
   if( !pCodec ) {
-    printf( "KiwiDriveClient [error]: Unable to initialize decoder\n" );
+    printf( "RoboCortex [error]: Unable to initialize decoder\n" );
     return( 5 );
   }
   avcodec_open( pCodecCtx, pCodec );  
@@ -529,7 +694,7 @@ int main( int argc, char *argv[] ) {
   SDL_Surface* frame = SDL_CreateRGBSurface( SDL_SWSURFACE, 640, 480, 24, 0, 0, 0, 0 );
 
   if( !frame ) {
-    printf( "KiwiDriveClient [error]: Unable to allcate SDL surface\n" );
+    printf( "RoboCortex [error]: Unable to allcate SDL surface\n" );
     return( 1 );
   }
   
@@ -544,21 +709,21 @@ int main( int argc, char *argv[] ) {
   // Create receiving thread
   hReceiver = SDL_CreateThread( receiver, NULL );
   
+  // Load plugins
+  load_plugins();
+  atexit( unload_plugins );
+  
   while( !quit ) {
 
     speech_poll();
     cursor_poll( &ctrl.ctrl.mx, &ctrl.ctrl.my );
 
-    /*
-    // Debug print cursor
-    char xxx[ 100 ];
-    sprintf( xxx, "%i, %i        ", ctrl.ctrl.mx, ctrl.ctrl.my );
-    term_write( 1, 10, xxx, 1 );
-    */
-
     if( state != laststate ) {
       if( state == STATE_STREAMING ) ctrl.ctrl.kb = 0;
-      l_text = -1;
+      if( keyboard_hook ) if( ( plug = keyboard_hook )->lost ) plug->lost();
+      if( cursor_hook ) if( ( plug = cursor_hook )->lost && plug != keyboard_hook ) plug->lost();
+      keyboard_hook = NULL;
+      cursor_hook = NULL;
       term_crem();
       laststate = state;
       term_clear();
@@ -567,30 +732,30 @@ int main( int argc, char *argv[] ) {
       if( state != STATE_STREAMING ) {
         switch( state ) {
           case STATE_CONNECTING:
-            term_write( 9, 24, text_contact, 0 );
-            term_write( 9, 25, text_blank, 0 );
+            term_write( 9, 24, text_contact, FONT_GREEN );
+            term_write( 9, 25, text_blank, FONT_GREEN );
             break;
           case STATE_QUEUED:
-            term_write( 9, 24, text_queued, 0 );
+            term_write( 9, 24, text_queued, FONT_GREEN );
             break;
           case STATE_ERROR:
-            term_write( 9, 24, text_error, 1 );
-            term_write( 9, 25, text_blank, 0 );
+            term_write( 9, 24, text_error, FONT_RED );
+            term_write( 9, 25, text_blank, FONT_GREEN );
             break;
           case STATE_FULL:
-            term_write( 9, 24, text_full, 1 );
-            term_write( 9, 25, text_blank, 0 );
+            term_write( 9, 24, text_full, FONT_RED );
+            term_write( 9, 25, text_blank, FONT_GREEN );
             break;
           case STATE_LOST:
-            term_write( 9, 24, text_lost, 1 );
-            term_write( 9, 25, text_blank, 0 );
+            term_write( 9, 24, text_lost, FONT_RED );
+            term_write( 9, 25, text_blank, FONT_GREEN );
             break;
           case STATE_VERSION:
-            term_write( 9, 24, text_version, 1 );
-            term_write( 9, 25, text_blank, 0 );
+            term_write( 9, 24, text_version, FONT_RED );
+            term_write( 9, 25, text_blank, FONT_GREEN );
             break;
         }
-        term_write( 9, 26, text_quit, 0 );
+        term_write( 9, 26, text_quit, FONT_GREEN );
       }
     }
 
@@ -628,7 +793,7 @@ int main( int argc, char *argv[] ) {
         avpkt.size = p_buffer_first->size;
         avpkt.flags = AV_PKT_FLAG_KEY;
         if( avcodec_decode_video2( pCodecCtx, pFrame, &temp, &avpkt ) < 0 ) {
-          printf( "KiwiDriveClient [info]: Decoding error (packet loss)\n" );
+          printf( "RoboCortex [info]: Decoding error (packet loss)\n" );
         } else {
           SDL_LockSurface( frame );      
 
@@ -659,8 +824,8 @@ int main( int argc, char *argv[] ) {
           temp /= 60;
           text_timeout[ 12 ] = '0' + ( ( temp % 60 ) % 10 );
           text_timeout[ 11 ] = '0' + ( ( temp % 60 ) / 10 );
-          term_write( 1, 1, text_controls, 0 );
-          term_write( 1, 2, text_timeout, 0 );
+          term_write( 1, 1, text_controls, FONT_GREEN );
+          term_write( 1, 2, text_timeout, FONT_GREEN );
         }
 
         // Pop decoding buffer from queue
@@ -699,7 +864,6 @@ int main( int argc, char *argv[] ) {
         DrawWuLine( temp - 1, 441 + p_vis[ temp ], temp + 2, 441 + ( p_vis[ temp + 3 ] ) );
         SetColor( 0x00, 0x00, 0x00 );
         DrawWuLine( temp + 2, 442 + p_vis[ temp ], temp + 5, 442 + ( p_vis[ temp + 3 ] ) );
-
         
         SetColor( 0x3F, 0xFF, 0x3F );
         for( temp = 0; temp < 636; temp += 4 ) {
@@ -719,7 +883,7 @@ int main( int argc, char *argv[] ) {
       // Draw logo
       rect.x = 170;
       rect.y = 60;
-      SDL_BlitSurface( logo, NULL, screen, &rect );
+      SDL_BlitSurface( spr_logo, NULL, screen, &rect );
 
       switch( state ) {
         case STATE_CONNECTING:
@@ -744,7 +908,7 @@ int main( int argc, char *argv[] ) {
           temp /= 60;
           text_time[  8 ] = '0' + ( temp % 10 );
           text_time[  7 ] = '0' + ( temp / 10 );
-          term_write( 9, 25, text_time, 0 );
+          term_write( 9, 25, text_time, FONT_GREEN );
           if( statec == 0 ) {
             if( ++retry == MAX_RETRY ) {
               state = STATE_ERROR;
@@ -758,14 +922,12 @@ int main( int argc, char *argv[] ) {
     
     }
 
+    // Allow plugins to draw
+    for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+      if( plug->draw ) plug->draw( screen );
+
     // Draw help overlay
-    if( b_help ) {
-      rect.x = 48;
-      rect.y = 160;
-      rect.w = help->w;
-      rect.h = help->h;
-      SDL_BlitSurface( help, NULL, screen, &rect );
-    }
+    if( b_help ) draw_box( 3, ( 28 - help_count ) >> 1, 34, help_count + 2 );
 
     // Clear messages
     if( message_timeout ) {
@@ -794,57 +956,35 @@ int main( int argc, char *argv[] ) {
             }
           }
           break;
+
+        case SDL_MOUSEMOTION:
+          if( state == STATE_STREAMING && cursor_hook != NULL ) {
+            plug = cursor_hook;
+            if( plug->cursor ) plug->cursor( E_MOVE, event.motion.x, event.motion.y );
+          }
+          break;
           
         case SDL_MOUSEBUTTONDOWN:
-          // Toggle cursor grabbing
-          if( event.button.button == SDL_BUTTON_LEFT && !b_fullscreen ) {
-            cursor_grab( !b_cursor_grabbed );
+          if( cursor_hook == NULL ) {
+            // Toggle cursor grabbing
+            if( event.button.button == SDL_BUTTON_LEFT && !b_fullscreen ) {
+              cursor_grab( !b_cursor_grabbed );
+            }
+          } else if( state == STATE_STREAMING ) {
+            plug = cursor_hook;
+            if( plug->cursor ) plug->cursor( E_BUTTONDOWN, event.motion.x, event.motion.y );
+          }
+          break;
+
+        case SDL_MOUSEBUTTONUP:
+          if( state == STATE_STREAMING && cursor_hook != NULL ) {
+            plug = cursor_hook;
+            if( plug->cursor ) plug->cursor( E_BUTTONUP, event.motion.x, event.motion.y );
           }
           break;
           
         case SDL_KEYDOWN:
-          if( l_text >= 0 ) {
-            switch( event.key.keysym.sym ) {
-              case SDLK_BACKSPACE:
-                // Remove last character
-                if( l_text > 0 ) {
-                  p_text[ --l_text ] = 0;
-                  term_white( l_text + 2, 28, 1 );
-                  term_cins( l_text + 2, 28 );
-                  break;
-                }
-                //...
-
-              case SDLK_RETURN:
-                if( l_text > 0 ) {
-                  // Send to server
-                  memset( p_text + strlen( p_text ), 0, 255 - strlen( p_text ) );
-                  trust_queue( p_text, strlen( p_text ) );
-                  // Queue for local playback
-                  speech_queue( p_text );
-                }
-                //...
-
-              case SDLK_ESCAPE:
-                // Abort text input
-                l_text = -1;
-                p_text[ l_text ] = 0;
-                term_white( 1, 28, 38 );
-                term_crem();
-                break;
-                
-              default:
-                // Attempt to insert character
-                c_text = UnicodeChar( event.key.keysym.unicode );
-                if( term_knows( c_text ) && l_text < 37 ) {
-                  p_text[ l_text++ ] = c_text;
-                  p_text[ l_text ] = 0;
-                  term_write( l_text + 1, 28, &p_text[ l_text - 1 ], 0 );
-                  term_cins( l_text + 2, 28 );
-                }
-                
-            }
-          } else {
+          if( keyboard_hook == NULL ) {
             switch( event.key.keysym.sym ) {
               case SDLK_ESCAPE: // Quit
                 quit = 1;
@@ -861,17 +1001,18 @@ int main( int argc, char *argv[] ) {
               case SDLK_l: // Switch keyboard layout
                 set_layout( layout + 1 );
                 break;
-                
+
+/*                
               case SDLK_t: // Text input
                 if( state == STATE_STREAMING ) {
                   l_text = 0;
                   p_text[ 0 ] = 0x00;
-                  term_write( 1, 28, ">", 0 );
+                  term_write( 1, 28, ">", FONT_GREEN );
                   term_cins( 2, 28 );
                   ctrl.ctrl.kb = 0;
                 }
                 break;
-                
+*/              
               case SDLK_h: // Toggle help
                 b_help = !b_help;
                 if( b_help ) {
@@ -889,27 +1030,36 @@ int main( int argc, char *argv[] ) {
                   ctrl.ctrl.kb |= KB_UP;
                 } else if( event.key.keysym.sym == keymap[ KM_DOWN ] ) {
                   ctrl.ctrl.kb |= KB_DOWN;
+                } else if( state == STATE_STREAMING && keyboard_binds[ event.key.keysym.sym ] != NULL ) {
+                  plug = keyboard_binds[ event.key.keysym.sym ];
+                  if( plug->keyboard ) plug->keyboard( E_KEYDOWN, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
                 }
                 break;
 
             }
+          } else if( state == STATE_STREAMING ) {
+            plug = keyboard_hook;            
+            if( plug->keyboard ) plug->keyboard( E_KEYDOWN, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
           }
           break;
         case SDL_KEYUP:
-          // WASD control scheme
-          switch( event.key.keysym.sym ) {
-            case SDLK_a:
+          if( state == STATE_STREAMING && keyboard_hook == NULL ) {
+            // WASD control scheme
+            if( event.key.keysym.sym == keymap[ KM_LEFT ] ) {
               ctrl.ctrl.kb &= ~KB_LEFT;
-              break;
-            case SDLK_d:
+            } else if( event.key.keysym.sym == keymap[ KM_RIGHT ] ) {
               ctrl.ctrl.kb &= ~KB_RIGHT;
-              break;
-            case SDLK_w:
+            } else if( event.key.keysym.sym == keymap[ KM_UP ] ) {
               ctrl.ctrl.kb &= ~KB_UP;
-              break;
-            case SDLK_s:
+            } else if( event.key.keysym.sym == keymap[ KM_DOWN ] ) {
               ctrl.ctrl.kb &= ~KB_DOWN;
-              break;
+            } else if( keyboard_binds[ event.key.keysym.sym ] != NULL ) {
+              plug = keyboard_binds[ event.key.keysym.sym ];
+              if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
+            }
+          } else if( keyboard_hook ) {
+            plug = keyboard_hook;            
+            if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
           }
           break;
       }
@@ -920,11 +1070,11 @@ int main( int argc, char *argv[] ) {
     if( time_diff > 1000 / CLIENT_RPS ) { 
       time_diff = 0;
       time_target = SDL_GetTicks();
-      printf( "KiwiRayClient [warning]: Cannot keep up with desired RPS\n" );
+      printf( "RoboCortex [warning]: Cannot keep up with desired RPS\n" );
     }
     if( time_diff < 0 ) {
       time_diff = 0;
-      printf( "KiwiRayClient [error]: SDL_Delay returns too fast\n" );
+      printf( "RoboCortex [error]: SDL_Delay returns too fast\n" );
     }
     time_target += 1000 / CLIENT_RPS;
     SDL_Delay( ( 1000 / CLIENT_RPS ) - time_diff );
@@ -942,6 +1092,6 @@ int main( int argc, char *argv[] ) {
   SDL_FreeSurface( frame );
   SDL_Quit();
 
-  printf( "KiwiDriveClient [info]: KTHXBYE!\n" );
+  printf( "RoboCortex [info]: KTHXBYE!\n" );
 
 }

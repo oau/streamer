@@ -12,6 +12,9 @@ gcc oswrap.c -c -I./include -o oswrap.o
 echo Compiling srv.c...
 gcc speech.c -c -I./include -o speech.o
 
+echo Compiling plugins/kiwiray/...
+gcc plugins/kiwiray/cli.c -c $CFLAGS -I./include -I./plugins -o kiwiray_cli.o
+
 echo Linking...
 gcc cli.o oswrap.o cli_term.o speech.o -L./lib-linux -lsam -l SDL -l avcodec -l avutil -l swscale -lz -o bin/cli
 

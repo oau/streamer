@@ -6,24 +6,28 @@ SET LFLAGS=-g
 SET STRIP=NO
 
 ECHO Compiling capture.cpp...
-g++ capture.cpp %CFLAGS% -I ./include -c
+g++ capture.cpp -c %CFLAGS% -I./include
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Compiling srv.c...
-gcc srv.c %CFLAGS% -I ./ -I ./include -I ./include/ffmpeg -c
+gcc srv.c -c %CFLAGS% -I./include -I./include/ffmpeg
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Compiling oswrap.c...
-gcc oswrap.c %CFLAGS% -I ./include -c
+gcc oswrap.c -c %CFLAGS% -I./include
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Compiling speech.c...
-gcc speech.c %CFLAGS% -I ./include -I ./include/ffmpeg -c
+gcc speech.c -c %CFLAGS% -I./include -I./include/ffmpeg
+IF ERRORLEVEL 1 GOTO ERROR
+
+ECHO Compiling plugins/kiwiray/...
+gcc plugins/kiwiray/srv.c -c %CFLAGS% -I./include -I./plugins -o kiwiray_srv.o
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Linking...
-g++ oswrap.o capture.o srv.o speech.o %LFLAGS% -L ./lib-w32                               -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv.exe
-g++ oswrap.o capture.o srv.o speech.o %LFLAGS% -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv_sdl.exe
+g++ oswrap.o capture.o srv.o speech.o kiwiray_srv.o %LFLAGS% -L ./lib-w32                               -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv.exe
+g++ oswrap.o capture.o srv.o speech.o kiwiray_srv.o %LFLAGS% -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lkernel32 -lwsock32 -lx264 -lmsvcrt -lswscale -lavutil -lvideoinput -lddraw -ldxguid -lole32 -loleaut32 -lstrmiids -luuid -lsam -o bin/srv_sdl.exe
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Cleaning up...

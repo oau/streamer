@@ -21,11 +21,16 @@ ECHO Compiling speech.c...
 gcc speech.c %CFLAGS% -I ./include -I ./include/ffmpeg -c
 IF ERRORLEVEL 1 GOTO ERROR
 
+ECHO Compiling plugins/kiwiray/...
+gcc plugins/kiwiray/cli.c -c %CFLAGS% -I./include -I./plugins -o kiwiray_cli.o
+IF ERRORLEVEL 1 GOTO ERROR
+
 ECHO Resources...
 windres cli-w32.rc -O coff -o cli.res
 
 ECHO Linking...
-gcc oswrap.o cli_term.o cli.o speech.o cli.res %LFLAGS% -I ./include -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lavcodec -lavutil -lwsock32 -lmsvcrt -lswscale -lsam -o bin/cli.exe
+g++ oswrap.o cli_term.o cli.o speech.o kiwiray_cli.o cli.res %LFLAGS% -I ./include -L ./lib-w32 -mwindows -lmingw32 -lsdlmain -lsdl -lavcodec -lavutil -lwsock32 -lmsvcrt -lswscale -lsam -o bin/cli.exe
+g++ oswrap.o cli_term.o cli.o speech.o kiwiray_cli.o cli.res %LFLAGS% -I ./include -L ./lib-w32                               -lsdl -lavcodec -lavutil -lwsock32 -lmsvcrt -lswscale -lsam -o bin/cli_nosdl.exe
 IF ERRORLEVEL 1 GOTO ERROR
 
 ECHO Cleaning up...

@@ -1,3 +1,15 @@
+#ifndef _ROBOCORTEX_H_
+#define _ROBOCORTEX_H_
+
+#define CORTEX_VERSION       3 // Current protocol revision
+#define CFG_TOKEN_MAX_SIZE  32 // Maxmimum length of a token value
+#define CFG_VALUE_MAX_SIZE 256 // Maxmimum length of a configuration value
+
+enum font_e {
+  FONT_GREEN,
+  FONT_RED
+};
+
 enum kb_bitmask_e {
   KB_LEFT  = 1,
   KB_RIGHT = 2,
@@ -33,3 +45,4 @@ struct linked_buf_t {
   struct linked_buf_t *next;
 };
 typedef struct linked_buf_t linked_buf_t;
+#endif

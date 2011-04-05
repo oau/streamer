@@ -8,7 +8,12 @@
 #include "oswrap.h"
 #include "robocortex.h"
 #include "speech.h"
+#include "plugins/srv.h"
 #include "sdl_console.h"
+
+// Plugins
+#define MAX_PLUGINS          10
+extern pluginclient_t *kiwiray_open( pluginhost_t* );
 
 // Audio
 //#define DISABLE_SPEECH          // Disables speech
@@ -16,20 +21,7 @@
 // Save the stream
 //#define SAVE_STREAM            "server.h264"
 
-// Movement
-#define ROT_DZN               3 // Dead-zone TODO: verify
-#define ROT_ACC               6 // Acceleration
-#define ROT_DMP               6 // Dampening
-#define ROT_SEN             0.5 // Sensitivity
-#define ROT_MAX            1000 // Max accumulated rotation TODO: verify
-
-#define MOV_ACC               2 // Acceleration
-#define MOV_BRK               5 // Breaking
-
-#define CAM_SEN             0.3 // Sensitivity
-
 // Protocol
-#define CORTEX_VERSION        2 // Protocol revision
 #define PORT               6979 // Default port
 #define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
 
@@ -48,19 +40,6 @@
 #define TIMEOUT_CONTROL    7500 // Before control session is ended
 #define TIMEOUT_TRUST         8 // Before retransmitting trusted packets
 #define TIMEOUT_GLITCH        2 // Before robot stops moving if a connection glitches/is lost
-#define TIMEOUT_EMOTICON    100 // Before emoticon is removed
-
-// Math
-#define MIN( a, b ) ( a < b ? a : b )
-#define MAX( a, b ) ( a > b ? a : b )
-
-// Emoticon list
-enum emo_e {
-  EMO_IDLE,
-  EMO_CONNECTED,
-  EMO_HAPPY,
-  EMO_ANGRY
-};
 
 // Client data
 struct client_t {
@@ -91,7 +70,8 @@ typedef struct {
 
 // Capture setting
 typedef struct {
-  char device[ 256 ];  
+  int enable;
+  char device[ CFG_VALUE_MAX_SIZE ];  
   int dev;
   int w, h;
   rect_t src;
@@ -145,172 +125,44 @@ static char pkt_lost[ 4 ] = "LOST";
 static char pkt_full[ 4 ] = "FULL";
 static char pkt_quit[ 4 ] = "QUIT";
 
-// Default configuration file
-static char fn_rc[] = "srv.rc";
-
-// Drive parameters
-static          char drive_x; // Strafe
-static          char drive_y; // Move
-static          char drive_r; // Turn
-static unsigned int drive_p; // Pitch
-static          long integrate_r = 0;
+// Configuration
+static char fn_rc[] = "srv.rc"; // Default configuration file
+static char *rc_file = fn_rc;
 
 // Capture
 static capture_t cap[ CAP_SOURCES ];
 static int cap_count;
 
 // Encoding
-int stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
-x264_t* encoder;
-x264_picture_t pic_in, pic_out;
+static int stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
+static x264_t* encoder;
+static x264_picture_t pic_in, pic_out;
 
 // Threads
-SDL_Thread    *hReceiver;
-SDL_Thread    *hKiwiray;
+static SDL_Thread    *hReceiver;
 
 // Timeouts
-int timeout_connection = TIMEOUT_CONNECTION;
-int timeout_control = TIMEOUT_CONTROL;
-int timeout_trust = TIMEOUT_TRUST;
-int timeout_glitch = TIMEOUT_GLITCH;
-int timeout_emoticon = TIMEOUT_EMOTICON;
+static int timeout_connection = TIMEOUT_CONNECTION;
+static int timeout_control = TIMEOUT_CONTROL;
+static int timeout_trust = TIMEOUT_TRUST;
+static int timeout_glitch = TIMEOUT_GLITCH;
 
-
-// Serial
-static char serdev[ 256 ];
-
-// Emoticons
-static unsigned char emoticon;
-static unsigned int emoticon_timeout;
-
-static void read_rc( FILE *f ) {
-  char line[ 256 ] = { ' ' };
-  char *es, *ps, *pe, *pl;
-  int  cap_i = -1;
-  
-  printf( "RoboCortex [info]: Reading configuration...\n" );
-  
-  while( !feof( f ) ) {
-    if( fgets( line + 1, 250, f ) != NULL ) {
-      // Remove line endings
-      es = line;
-      while( *es != 0 ) {
-        if( *es == 10 ) *es = ' ';
-        if( *es == 13 ) *es = ' ';
-        es++;
-      }
-      // Find entry start
-      es = line; while( *es == ' ' && *es != 0 ) if( *++es == '#' ) *es = 0;
-      if( *es != 0  ) {
-        // Find entry end
-        pe = es; while( *pe != ' ' && *pe != 0 ) if( *++pe == '#' ) *pe = 0;
-        
-        if( *pe != 0 ) {
-          // Replace with null-char
-          *pe = 0;
-          // Find parameter start
-          ps = pe + 1; while( *ps == ' ' && *ps != 0 ) if( *++ps == '#' ) *ps = 0;
-          if( *ps != 0 ) {
-            // Find parameter end
-            pe = ps;
-            while( *pe != 0 ) {
-              if( *pe != ' ' ) pl = pe;
-              if( *++pe == '#' ) *pe = 0;
-            }
-            // Replace with null-char
-            *++pl = 0;
-            
-            //printf( "RoboCortex [info]: Configuration - %s=%s\n", es, ps );
-            
-            if( strcmp( es, "w"      ) == 0 ) {
-              if( cap_i >= 0 ) {
-                cap[ cap_i ].w = atoi( ps );
-                cap[ cap_i ].src.x = 0;
-                cap[ cap_i ].src.w = cap[ cap_i ].w;
-                cap[ cap_i ].dst.x = 0;
-                cap[ cap_i ].dst.w = stream_w;
-              } else stream_w = atoi( ps );
-            } else if( strcmp( es, "h"      ) == 0 ) {
-              if( cap_i >= 0 ) {
-                cap[ cap_i ].h = atoi( ps );
-                cap[ cap_i ].src.y = 0;
-                cap[ cap_i ].src.h = cap[ cap_i ].h;
-                cap[ cap_i ].dst.y = 0;
-                cap[ cap_i ].dst.h = stream_h;
-              } else stream_h = atoi( ps );
-            } else if( strcmp( es, "fps"    ) == 0 ) {
-              fps = atoi( ps );
-            } else if( strcmp( es, "comms"  ) == 0 ) {
-              strcpy( serdev, ps );
-            } else if( strcmp( es, "port"  ) == 0 ) {
-              port = atoi( ps );
-            } else if( strcmp( es, "device" ) == 0 ) {
-              if( cap_i >= ( CAP_SOURCES - 1 ) ) printf( "RoboCortex [warning]: Configuration - too many capture sources.\n" );
-              else {
-                cap_i++;
-                strcpy( cap[ cap_i ].device, ps );
-              }
-            } else if( strcmp( es, "timeout_connection"  ) == 0 ) {
-              timeout_connection = atoi( ps );
-            } else if( strcmp( es, "timeout_control"  ) == 0 ) {
-              timeout_control = atoi( ps );
-            } else if( strcmp( es, "timeout_trust"  ) == 0 ) {
-              timeout_trust = atoi( ps );
-            } else if( strcmp( es, "timeout_glitch"  ) == 0 ) {
-              timeout_glitch = atoi( ps );
-            } else if( strcmp( es, "timeout_emoticon"  ) == 0 ) {
-              timeout_emoticon = atoi( ps );
-            } else if( strcmp( es, "src_x"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_x outside device section\n" );
-              else cap[ cap_i ].src.x = atoi( ps );
-            } else if( strcmp( es, "src_y"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_y outside device section\n" );
-              else cap[ cap_i ].src.y = atoi( ps );
-            } else if( strcmp( es, "src_w"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_w outside device section\n" );
-              else cap[ cap_i ].src.w = atoi( ps );
-            } else if( strcmp( es, "src_h"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_h outside device section\n" );
-              else cap[ cap_i ].src.h = atoi( ps );
-            } else if( strcmp( es, "dst_x"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_x outside device section\n" );
-              else cap[ cap_i ].dst.x = atoi( ps );
-            } else if( strcmp( es, "dst_y"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_y outside device section\n" );
-              else cap[ cap_i ].dst.y = atoi( ps );
-            } else if( strcmp( es, "dst_w"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_w outside device section\n" );
-              else cap[ cap_i ].dst.w = atoi( ps );
-            } else if( strcmp( es, "dst_h"  ) == 0 ) {
-              if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_h outside device section\n" );
-              else cap[ cap_i ].dst.h = atoi( ps );
-            } else {
-              printf( "RoboCortex [warning]: Configuration - unknown entry %s\n", es );
-            }
-          }
-        }
-      }
-    }
-  }
-  printf( "RoboCortex [info]: Configuration - stream is %ix%ix%ifps\n", stream_w, stream_h, fps );
-  for( cap_count = 0; cap_count <= cap_i; cap_count++ ) {
-    printf( "RoboCortex [info]: Configuration - capture %i:%s is %ix%i, %i:%ix%i:%i -> %i:%ix%i:%i\n",
-      cap_count, cap[ cap_count ].device,
-      cap[ cap_count ].w, cap[ cap_count ].h,
-      cap[ cap_count ].src.x, cap[ cap_count ].src.w, cap[ cap_count ].src.y, cap[ cap_count ].src.h,
-      cap[ cap_count ].dst.x, cap[ cap_count ].dst.w, cap[ cap_count ].dst.y, cap[ cap_count ].dst.h
-    );
-  }
-}
+// Plugins
+static   pluginhost_t  host;
+static pluginclient_t *plug;
+static pluginclient_t *plugs[ MAX_PLUGINS ];
+static            int  plugs_count;
 
 // Queues a packet for trusted (non-lossy) transmission
-static void trust_queue( void* data, unsigned char size ) {
+static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
   linked_buf_t *p_trust;
   p_trust = malloc( sizeof( linked_buf_t ) );
   if( p_trust ) {
     // Create packet
-    memcpy( p_trust->data, data, size );
-    p_trust->size = size;
+    memcpy( p_trust->data, &ident, 4 );
+    p_trust->data[ 4 ] = size;
+    memcpy( p_trust->data + 5, data, size );
+    p_trust->size = size + 5;
     p_trust->next = NULL;
     // Insert into linked list
     SDL_mutexP( trust_mx );
@@ -325,31 +177,234 @@ static void trust_queue( void* data, unsigned char size ) {
 }
 
 // Handles trusted data packets
-void trust_handler( client_t *p_client, char* data, int size ) {
+void trust_handler( client_t *p_client, unsigned char* data, int size ) {
   unsigned char n;
+  int pid;
+  uint32_t ident;
+  unsigned char len;
   if( size == 0 ) return;
   data[ size ] = 0;
   p_client->trust_cli++;
-  printf( "RoboCortex [info]: Client %i says: %s\n", p_client->index, data );  
-  //trust_queue( data, size ); // TODO: remove
-  for( n = 0; n < size - 1; n++ ) {
-    if( data[ n ] == ':' ) {
-      switch( data[ n + 1 ] ) {
-        case ')':
-          emoticon = EMO_HAPPY;
-          break;
-        case '(':
-          emoticon = EMO_ANGRY;
-          break;
+
+  // Pass data to plugins
+  while( size > 5 ) {
+    ident = *( uint32_t* )data; data += 4;
+    len = *data++;
+    size -= 5;
+    if( size >= len ) {
+      // plugin->recv
+      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ ) {
+        if( plug->ident == ident ) {
+          if( plug->recv ) plug->recv( data, len );
+        }
       }
-      if( emoticon > 1 ) emoticon_timeout = timeout_emoticon;
-      data[ n ] = ' ';
-      data[ n + 1 ] = ' ';
+    }
+    size -= len;
+  }
+}
+
+// Reads one configuration line
+static int cfg_read( char **value, char **token, FILE *f ) {
+  char line[ CFG_VALUE_MAX_SIZE + CFG_TOKEN_MAX_SIZE + 3 ] = { ' ' };
+  char *es, *ps, *pe, *pl;
+  while( !feof( f ) ) {
+    if( fgets( line + 1, sizeof( line ) - 1, f ) != NULL ) {
+      // Remove line endings
+      es = line; while( *es != 0 ) if( *es == 10 || *es == 13 ) *es++ = ' '; else es++;
+      // Find entry start
+      es = line; while( *es == ' ' && *es != 0 ) if( *++es == '#' ) *es = 0;
+      if( *es != 0  ) {
+        // Find entry end
+        pe = es; while( *pe != ' ' && *pe != 0 ) if( *++pe == '#' ) *pe = 0;
+        if( *pe != 0 ) {
+          // Null-terminate
+          *pe = 0;
+          // Find parameter start
+          ps = pe + 1; while( *ps == ' ' && *ps != 0 ) if( *++ps == '#' ) *ps = 0;
+          if( *ps != 0 ) {
+            // Find parameter end
+            pe = ps;
+            while( *pe != 0 ) {
+              if( *pe != ' ' ) pl = pe;
+              if( *++pe == '#' ) *pe = 0;
+            }
+            // Null-terminate
+            *++pl = 0;
+            //printf( "RoboCortex [info]: Configuration - %s=%s\n", es, ps );
+            *token = es;
+            *value = ps;
+            return( 1 );
+          }
+        }
+      }
     }
   }
-#ifndef DISABLE_SPEECH
-  speech_queue( data );
-#endif
+  return( 0 );
+  
+}
+
+static void cfg_parse( FILE *f ) {
+  char *token, *value;
+  int  cap_i = -1;
+  
+  printf( "RoboCortex [info]: Reading configuration...\n" );
+  
+  while( cfg_read( &value, &token, f ) ) {
+    if( strcmp( token, "w" ) == 0 ) {
+      if( cap_i >= 0 ) {
+        cap[ cap_i ].w = atoi( value );
+        cap[ cap_i ].src.x = 0;
+        cap[ cap_i ].src.w = cap[ cap_i ].w;
+        cap[ cap_i ].dst.x = 0;
+        cap[ cap_i ].dst.w = stream_w;
+      } else stream_w = atoi( value );
+    } else if( strcmp( token, "h" ) == 0 ) {
+      if( cap_i >= 0 ) {
+        cap[ cap_i ].h = atoi( value );
+        cap[ cap_i ].src.y = 0;
+        cap[ cap_i ].src.h = cap[ cap_i ].h;
+        cap[ cap_i ].dst.y = 0;
+        cap[ cap_i ].dst.h = stream_h;
+      } else stream_h = atoi( value );
+    } else if( strcmp( token, "fps" ) == 0 ) {
+      fps = atoi( value );
+    } else if( strcmp( token, "port" ) == 0 ) {
+      port = atoi( value );
+    } else if( strcmp( token, "device" ) == 0 ) {
+      if( cap_i >= ( CAP_SOURCES - 1 ) ) printf( "RoboCortex [warning]: Configuration - too many capture sources.\n" );
+      else {
+        cap_i++;
+        cap[ cap_i ].enable = 1;
+        strcpy( cap[ cap_i ].device, value );
+      }
+    } else if( strcmp( token, "timeout_connection" ) == 0 ) {
+      timeout_connection = atoi( value );
+    } else if( strcmp( token, "timeout_control" ) == 0 ) {
+      timeout_control = atoi( value );
+    } else if( strcmp( token, "timeout_trust" ) == 0 ) {
+      timeout_trust = atoi( value );
+    } else if( strcmp( token, "timeout_glitch" ) == 0 ) {
+      timeout_glitch = atoi( value );
+    } else if( strcmp( token, "src_x" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_x outside device section\n" );
+      else cap[ cap_i ].src.x = atoi( value );
+    } else if( strcmp( token, "src_y" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_y outside device section\n" );
+      else cap[ cap_i ].src.y = atoi( value );
+    } else if( strcmp( token, "src_w" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_w outside device section\n" );
+      else cap[ cap_i ].src.w = atoi( value );
+    } else if( strcmp( token, "src_h" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_h outside device section\n" );
+      else cap[ cap_i ].src.h = atoi( value );
+    } else if( strcmp( token, "dst_x" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_x outside device section\n" );
+      else cap[ cap_i ].dst.x = atoi( value );
+    } else if( strcmp( token, "dst_y" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_y outside device section\n" );
+      else cap[ cap_i ].dst.y = atoi( value );
+    } else if( strcmp( token, "dst_w" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_w outside device section\n" );
+      else cap[ cap_i ].dst.w = atoi( value );
+    } else if( strcmp( token, "dst_h" ) == 0 ) {
+      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_h outside device section\n" );
+      else cap[ cap_i ].dst.h = atoi( value );
+    } else if( strcmp( token, "plugin" ) == 0 ) {
+      break;
+    } else {
+      printf( "RoboCortex [warning]: Configuration - unknown entry %s\n", token );
+    }
+  }
+  printf( "RoboCortex [info]: Configuration - stream is %ix%ix%ifps\n", stream_w, stream_h, fps );
+  for( cap_count = 0; cap_count <= cap_i; cap_count++ ) {
+    printf( "RoboCortex [info]: Configuration - capture %i:%s is %ix%i, %i:%ix%i:%i -> %i:%ix%i:%i\n",
+      cap_count, cap[ cap_count ].device,
+      cap[ cap_count ].w, cap[ cap_count ].h,
+      cap[ cap_count ].src.x, cap[ cap_count ].src.w, cap[ cap_count ].src.y, cap[ cap_count ].src.h,
+      cap[ cap_count ].dst.x, cap[ cap_count ].dst.w, cap[ cap_count ].dst.y, cap[ cap_count ].dst.h
+    );
+  }
+}
+
+static int plug_thread( void *pThread ) {
+  ( ( void( * )() )pThread )();
+  return( 0 );
+}
+
+static void* plug_thrstart( void( *pThread )() ) {
+  return( SDL_CreateThread( plug_thread, ( void* )pThread ) );
+}
+
+static void plug_thrstop( void* pHandle ) {
+  SDL_KillThread( pHandle );
+}
+
+static void plug_thrdelay( int delay ) {
+  SDL_Delay( delay );
+}
+
+static void plug_send( void* data, unsigned char size ) {
+  trust_queue( plug->ident, data, size );
+}
+
+static int plug_cfg( char* dst, char* req_token ) {
+  FILE *cf;
+  int ret = 0;
+  char *value, *token;
+  cf = fopen( rc_file, "r" );
+  if( cf == NULL ) {
+    printf( "RoboCortex [error]: Cannot open configuration file %s\n", rc_file );
+  } else {
+    while( cfg_read( &value, &token, cf ) ) {
+      if( strcmp( token, "plugin" ) == 0 ) {
+        if( strlen( value ) == 4 ) {
+          if( memcmp( value, &plug->ident, 4 ) == 0 ) {
+            while( cfg_read( &value, &token, cf ) ) {
+              if( strcmp( token, "plugin" ) == 0 ) break;
+              if( strcmp( token, req_token ) == 0 ) {
+                strcpy( dst, value );
+                ret = 1;
+                break;
+              }
+            }
+            break;
+          }
+        }
+      }
+    }
+  }
+  fclose( cf );
+  return( ret );
+}
+
+static void plug_cap( int dev, int enable ) {
+  if( dev < cap_count ) cap[ dev ].enable = enable;
+}
+
+static void load_plugins() {
+  int pid;
+  host.thread_start = plug_thrstart;
+  host.thread_stop  = plug_thrstop;
+  host.thread_delay = plug_thrdelay;
+  host.speak_text   = speech_queue;
+  host.client_send  = plug_send;
+  host.cfg_read     = plug_cfg;
+  host.cap_enable   = plug_cap;
+  printf( "RoboCortex [info]: Loading plugins...\n" );
+  // Load kiwiray plugin
+  plugs[ plugs_count++ ] = kiwiray_open( &host );
+  printf( "RoboCortex [info]: Initializing plugins...\n" );
+  // plugin->init
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+    if( plug->init ) plug->init();
+  printf( "RoboCortex [info]: Plugins loaded and initialized\n" );
+}
+
+static void unload_plugins() {
+  int pid;
+  // plugin->close
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+    if( plug->close ) plug->close();
 }
 
 // Clear trusted queue
@@ -395,7 +450,7 @@ static client_t *clients_find( NET_ADDR *client ) {
 
 // Add client, return index or -1 if queue is full
 static client_t *clients_add( NET_ADDR *client ) {
-  int n;
+  int n, pid;
   client_t *p_ret = NULL;
   // Iterate client table
   SDL_mutexP( client_mx );
@@ -418,7 +473,11 @@ static client_t *clients_add( NET_ADDR *client ) {
         do_intra = 1; // Intra-refresh needed
         trust_clear();
         client_first = &clients[ n ];
-        emoticon = EMO_CONNECTED;
+        host.ctrl = &client_first->ctrl.ctrl;
+        host.diff = &client_first->diff;
+        // plugin->connected( 1 )
+        for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+          if( plug->connected ) plug->connected( 1 );
       }
       client_last = &clients[ n ];
       p_ret = &clients[ n ];
@@ -451,7 +510,7 @@ static char * queue_time( char buf[], int offset, client_t *p_client ) {
 
 // Count down all client timers, kill active client if it's timer reaches zero
 static void clients_tick() {
-  int n;
+  int n, pid;
   // Count down timeouts
   SDL_mutexP( client_mx );
   for( n = 0; n < MAX_CLIENTS; n++ ) {
@@ -471,9 +530,15 @@ static void clients_tick() {
     	// Time for client switch
       printf( "RoboCortex [info]: Client %i disconnected (time up)\n", client_first->index );
       client_first = client_first->next;
-    	emoticon = EMO_IDLE;
+      host.ctrl = &client_first->ctrl.ctrl;
+      host.diff = &client_first->diff;
+      // plugin->connected( 0 )
+      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+        if( plug->connected ) plug->connected( 0 );
       if( client_first ) {
-        emoticon = EMO_CONNECTED;
+        // plugin->connected( 1 )
+        for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+          if( plug->connected ) plug->connected( 1 );
       	client_first->prev = NULL;
 	      do_intra = 1; // Intra-refresh needed
       }
@@ -483,101 +548,13 @@ static void clients_tick() {
   SDL_mutexV( client_mx );
 }
 
-// Thread handles KiwiRay communications
-int kiwiray( void *unused ) {
-  int b_working = 0;
-  unsigned char n;
-  unsigned char emotilast = 255;
-  char p_pkt[ 64 ] = {  0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 };
-  const unsigned char emotidata[ 4 ][ 24 ] = {
-    {
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00011000, 0b00000000,
-      0b00000000, 0b00011000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000
-    }, {
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00111100, 0b00111100, 0b00111100,
-      0b00100100, 0b00100100, 0b00100100,
-      0b00100100, 0b00100100, 0b00100100,
-      0b00111100, 0b00111100, 0b00111100,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000
-    }, {
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b11100111, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b10000001, 0b00000000,
-      0b00000000, 0b01000010, 0b00000000,
-      0b00000000, 0b00111100, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000
-    }, {
-      0b00000000, 0b00000000, 0b00000000,
-      0b01000010, 0b00000000, 0b00000000,
-      0b00100100, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000,
-      0b00111100, 0b00000000, 0b00000000,
-      0b01000010, 0b00000000, 0b00000000,
-      0b00000000, 0b00000000, 0b00000000
-    }
-  };
-
-  // Initial serial startup
-  b_working = ( serial_open( serdev ) == 0 );
-  if( !b_working ) {
-    printf( "RoboCortex [warning]: Unable to open %s, disabling serial\n", serdev );
-    return( 0 );
-  }
-  b_working = !serial_params( "115200,n,8,1" );
-  if( !b_working ) {
-    printf( "RoboCortex [warning]: Unable to configure %s, disabling serial\n", serdev );
-    serial_close();
-    return( 0 );
-  }
-  while( 1 ) {
-    // Re-open on errors
-    if( !b_working ) {
-      printf( "RoboCortex [warning]: Serial port problem, re-opening...\n" );
-      SDL_Delay( 5000 );
-      serial_close();
-      b_working = ( serial_open( serdev ) == 0 );
-      if( b_working ) b_working = serial_params( "115200,n,8,1" );
-    }
-    p_pkt[ 1 ] = 0x00;               // Drive XYZ
-    p_pkt[ 2 ] = -drive_x;           // Strafe X
-    p_pkt[ 3 ] = -drive_y;           // Move   Y
-    p_pkt[ 4 ] =  drive_r;           // Rotate R
-    p_pkt[ 5 ] =  drive_p * CAM_SEN; // Look   Pitch
-    p_pkt[ 6 ] =  6;                 // Stepsize = 1:2^6
-    if( b_working) b_working = ( serial_write( p_pkt, 7 ) == 7 );
-    if( emotilast != emoticon ) {
-      p_pkt[ 1 ] = 0x33;             // Display
-      p_pkt[ 2 ] = 23;               // 8x8x3 bits (-1)
-      for( n = 0; n < 24; n++ ) {
-        p_pkt[ 3 + n ] = emotidata[ emoticon ][ n ];
-      }
-      //memcpy( &p_pkt[ 3 ], emotidata[ emoticon ], 24 );
-      if( b_working) b_working = ( serial_write( p_pkt, 27 ) == 27 );
-      emotilast = emoticon;
-    }
-    SDL_Delay( 20 ); // roughly 50 times second
-  }
-}
-
 // Thread handles reception of UDP packets
 int receiver( void *unused ) {
   int size;
   client_t *p_client;
   char buffer[ 8192 ];
   while( 1 ) {
-    net_addr_init( &cli_addr, NET_ADDR_ANY, 0 ); // TODO: is this really necessary?
+    net_addr_init( &cli_addr, NET_ADDR_ANY, 0 );
     size = net_recv( &h_sock, buffer, 8192, &cli_addr );
     // Find client
     p_client = clients_find( &cli_addr );
@@ -679,7 +656,6 @@ void encoder_close()   { x264_encoder_close( encoder );                }
 void picture_close()   { x264_picture_clean( &pic_in );                }
 void trust_mx_close()  { SDL_DestroyMutex( trust_mx );                 }
 void client_mx_close() { SDL_DestroyMutex( client_mx );                }
-void kiwiray_close()   { SDL_KillThread( hKiwiray );                   }
 void receiver_close()  { SDL_KillThread( hReceiver );                  }
 void close_message()   { printf( "\nRoboCortex [info]: KTHXBYE!\n" ); }
 void sws_close() {
@@ -691,7 +667,7 @@ void sws_close() {
 }
 
 int main( int argc, char *argv[] ) {
-  int            n;
+  int            n, pid;
 	int            cap_w, cap_h;
   x264_param_t   param;
   x264_nal_t    *nals;
@@ -705,7 +681,6 @@ int main( int argc, char *argv[] ) {
   int            temp;
   Uint32         time_target;
   Sint32         time_diff;
-  char          *rc_file = fn_rc;
   FILE          *cf;
 #ifdef SAVE_STREAM
   FILE          *sf;
@@ -722,7 +697,7 @@ int main( int argc, char *argv[] ) {
     printf( "RoboCortex [error]: Cannot open configuration file %s\n", rc_file );
     exit( EXIT_CONFIG );
   }
-  read_rc( cf );
+  cfg_parse( cf );
   fclose( cf );
   if( cap_count == 0 ) {
     printf( "RoboCortex [error]: No capture sources\n" );
@@ -848,22 +823,24 @@ int main( int argc, char *argv[] ) {
     exit( EXIT_PICTURE );
   }
 
+  memcpy( host.stream_stride, pic_in.img.i_stride, sizeof( int ) * 3 );
+  memcpy( host.stream_plane, pic_in.img.plane, sizeof( uint8_t* ) * 3 );
+  host.stream_w = stream_w;
+  host.stream_h = stream_h;
+
   // Create receiving thread
   hReceiver = SDL_CreateThread( receiver, NULL );
   atexit( receiver_close );
   
-  // Initialize serial
-  if( serdev[ 0 ] != 0 ) {
-    hKiwiray = SDL_CreateThread( kiwiray, NULL );
-    atexit( kiwiray_close );
-  } else {
-    printf( "RoboCortex [warning]: Configuration - comms missing, disabling serial\n" );
-  }
-
+  // Load plugins
+  load_plugins();
+  atexit( unload_plugins );
+  
 #ifndef DISABLE_SPEECH
   speech_open();
-  speech_queue( "INITIALIZED AND READY FOR CONNECTION" );
+  atexit( speech_close );
 #endif
+  speech_queue( "INITIALIZED AND READY FOR CONNECTION" );
 
   printf( "\nRoboCortex [info]: listening on port %i...\n", port );
 
@@ -885,11 +862,33 @@ int main( int argc, char *argv[] ) {
     // Fetch latest picture from capture devices
     for( n = 0; n < cap_count; n++ ) {
       cap[ n ].data = ( uint8_t * )capture_fetch( n );
+      // plugin->capture
+      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+        if( plug->capture ) plug->capture( n, cap[ n ].w, cap[ n ].h, cap[ n ].data );
     }
 
 		// Scaling and coding as explained by http://stackoverflow.com/questions/2940671/how-to-encode-series-of-images-into-h264-using-x264-api-c-c
 		cap_process( pic_in.img.i_stride, pic_in.img.plane );
+
+    // Have client?
+    SDL_mutexP( client_mx );
+    temp = ( client_first ? 1 : 0 );
+    SDL_mutexV( client_mx );
     
+    // Clear motion if control packets are not arriving
+    if( temp ) {
+      if( client_first->glitch == 0 ) {
+        client_first->ctrl.ctrl.kb = 0;
+      }
+    }
+
+    // Calculate control differentials 
+    if( temp ) clients_diff( client_first );
+
+    // plugin->tick
+    for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+      if( plug->tick ) plug->tick();
+
     // Encode frame    
     if( do_intra ) {
       do_intra = 0;
@@ -924,68 +923,7 @@ int main( int argc, char *argv[] ) {
     if( pl > pt ) pt = pl;
 
     // Client connected?
-    SDL_mutexP( client_mx );
-    temp = ( client_first ? 1 : 0 );
-    // Stop moving if control packets are not arriving
     if( temp ) {
-      if( client_first->glitch == 0 ) {
-        client_first->ctrl.ctrl.kb = 0;
-      }
-    }
-  	// Emoticon timeout
-  	if( emoticon_timeout ) {
-  	  if( --emoticon_timeout == 0 ) emoticon = ( temp ? EMO_CONNECTED : EMO_IDLE );
-  	}
-    SDL_mutexV( client_mx );
-    if( temp ) {
-
-      // Calculate control differentials 
-      clients_diff( client_first );
-
-      // Handle movement X and Y
-      if( client_first->ctrl.ctrl.kb & KB_LEFT  ) {
-        drive_x = ( drive_x > -( 127 - MOV_ACC ) ? drive_x - MOV_ACC : -127 );
-      } else if( drive_x < 0 ) {
-        drive_x = ( drive_x < -MOV_BRK ? drive_x + MOV_BRK : 0 );
-      }
-      if( client_first->ctrl.ctrl.kb & KB_RIGHT ) {
-        drive_x = ( drive_x <  ( 127 - MOV_ACC ) ? drive_x + MOV_ACC :  127 );
-      } else if( drive_x > 0 ) {
-        drive_x = ( drive_x >  MOV_BRK ? drive_x - MOV_BRK : 0 );
-      }
-      if( client_first->ctrl.ctrl.kb & KB_UP    ) {
-        drive_y = ( drive_y > -( 127 - MOV_ACC ) ? drive_y - MOV_ACC : -127 );
-      } else if( drive_y < 0 ) {
-        drive_y = ( drive_y < -MOV_BRK ? drive_y + MOV_BRK : 0 );
-      }
-      if( client_first->ctrl.ctrl.kb & KB_DOWN  ) {
-        drive_y = ( drive_y <  ( 127 - MOV_ACC ) ? drive_y + MOV_ACC :  127 );
-      } else if( drive_y > 0 ) {
-        drive_y = ( drive_y >  MOV_BRK ? drive_y - MOV_BRK : 0 );
-      }
-
-      // Handle movement R
-      integrate_r -= ( drive_r * ROT_SEN );
-      integrate_r += client_first->diff.mx;
-      integrate_r = MAX( MIN( integrate_r, ROT_MAX ), -ROT_MAX );
-      if( integrate_r > ROT_DZN ) {
-        drive_r = ( drive_r <  ( 127 - ROT_ACC ) ? drive_r + ROT_ACC :  127 );
-        if( drive_r > integrate_r / ROT_DMP + ROT_DZN ) drive_r = integrate_r / ROT_DMP + ROT_DZN;
-      } else if( integrate_r < -ROT_DZN ) {
-        drive_r = ( drive_r > -( 127 - ROT_ACC ) ? drive_r - ROT_ACC : -127 );
-        if( drive_r < integrate_r / ROT_DMP - ROT_DZN ) drive_r = integrate_r / ROT_DMP - ROT_DZN;
-      } else {
-        drive_r = 0;
-      }
-      
-      // Handle camera pitch
-      if( ( long )drive_p + client_first->diff.my > 255 / CAM_SEN ) {
-        drive_p = 255 / CAM_SEN;
-      } else if( ( long )drive_p + client_first->diff.my < 0 ) {
-        drive_p = 0;
-      } else {
-        drive_p = drive_p + client_first->diff.my;
-      }
 
     	// Send H.264 frame
       net_send( &h_sock, p_buffer, i_buffer, &client_first->client );
@@ -1016,11 +954,9 @@ int main( int argc, char *argv[] ) {
       net_send( &h_sock, p_buffer, i_buffer, &client_first->client );
       
     } else {
-      drive_x = 0;
-      drive_y = 0;
-      drive_r = 0;
-      drive_p = 165 / CAM_SEN;
-      integrate_r = 0;
+      // plugin->still
+      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+        if( plug->still ) plug->still();
     }
 
     // Delay 1/fps seconds, constantly correct for processing overhead

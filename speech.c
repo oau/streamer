@@ -24,6 +24,8 @@ static unsigned char vis_buffer[ VIS_SIZE ];
 static int  do_vis = 0;
 static int ctr = 0;
 
+static int opened;
+
 int speech_vis( unsigned char **buffer ) {
 	do_vis = 1;
 	if( sam_speaking == 1 ) {
@@ -73,8 +75,10 @@ void speech_open() {
   fmt.userdata = NULL;
   if ( SDL_OpenAudio( &fmt, NULL ) < 0 ) {
     fprintf( stderr, "SAM [error]: Unable to open SDL audio\n" );
+  } else {
+    printf( "SAM [info]: Initialized\n" );
+    opened = 1;
   }
-  printf( "SAM [info]: Initialized\n" );
 }
 
 static void sam_play() {
@@ -107,6 +111,9 @@ void speech_poll() {
 
 void speech_queue( char* speak ) {
   sam_list_t *p_sam = malloc( sizeof( sam_list_t ) );
+
+  if( !opened ) return;
+
   // Copy and convert to phenomes
   memset( p_sam->phenomes, 0, 256 );
   strcpy( p_sam->phenomes, speak );
@@ -124,6 +131,9 @@ void speech_queue( char* speak ) {
 	
 	speech_poll();
 
+}
+
+void speech_close() {
 }
 
 int speech_state() {

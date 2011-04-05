@@ -11,14 +11,12 @@
 
 ## Communications
 #port               6979  #udp port (6979)
-comms              COM3  #communications port
 
 ## Timeouts (in frames, see fps)
 #timeout_connection  100  #before connection is closed if no data has arrived (100)
 #timeout_control    7500  #before control session is ended (7500)
 #timeout_trust         8  #before retransmitting trusted packets (8)
 #timeout_glitch        2  #before robot stops moving if a connection glitches/is lost (2)
-#timeout_emoticon    100  #before emoticon is removed (100)
 
 ## Main camera
 device                0  #device index for windows (-1 for list), device path for linux
@@ -48,3 +46,8 @@ dst_x                32
 dst_y                32
 dst_w               256
 dst_h                48
+
+## Plugin configurations
+plugin             KIWI
+timeout_emoticon    100  #before emoticon is removed (100)
+commport           COM3  #communications port
