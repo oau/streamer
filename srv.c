@@ -19,7 +19,7 @@
 // Movement
 #define ROT_DZN               3 // Dead-zone TODO: verify
 #define ROT_ACC               6 // Acceleration
-#define ROT_DMP               6// Dampening
+#define ROT_DMP               6 // Dampening
 #define ROT_SEN             0.5 // Sensitivity
 #define ROT_MAX            1000 // Max accumulated rotation TODO: verify
 
@@ -35,17 +35,15 @@
 
 // Capture (device may not be capable and return another size)
 #define CAP_SOURCES          10 // Max number of capture sources
-#define CAP_WIDTH           640 // Requested capture width
-#define CAP_HEIGHT          480 // Requested capture height
 
 // Stream default size
 #define STREAM_WIDTH        320 // Width of streamed video
 #define STREAM_HEIGHT       240 // Height of streamed video
 
-// Stream FPS
-#define STREAM_FPS           25 // FPS of streamed video (also requested capture FPS)
+// Default FPS
+#define FPS                  25 // FPS of streamed video (also requested capture FPS)
 
-// Timeouts (in frames, see STREAM_FPS)
+// Default timeouts (in frames, see fps)
 #define TIMEOUT_CONNECTION  100 // Before connection is closed if no data has arrived
 #define TIMEOUT_CONTROL    7500 // Before control session is ended
 #define TIMEOUT_TRUST         8 // Before retransmitting trusted packets
@@ -162,13 +160,21 @@ static capture_t cap[ CAP_SOURCES ];
 static int cap_count;
 
 // Encoding
-int stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, stream_fps = STREAM_FPS;
+int stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
 x264_t* encoder;
 x264_picture_t pic_in, pic_out;
 
 // Threads
 SDL_Thread    *hReceiver;
 SDL_Thread    *hKiwiray;
+
+// Timeouts
+int timeout_connection = TIMEOUT_CONNECTION;
+int timeout_control = TIMEOUT_CONTROL;
+int timeout_trust = TIMEOUT_TRUST;
+int timeout_glitch = TIMEOUT_GLITCH;
+int timeout_emoticon = TIMEOUT_EMOTICON;
+
 
 // Serial
 static char serdev[ 256 ];
@@ -184,9 +190,15 @@ static void read_rc( FILE *f ) {
   
   printf( "RoboCortex [info]: Reading configuration...\n" );
   
-  //f = fopen( "srv.rc", "r" );
   while( !feof( f ) ) {
     if( fgets( line + 1, 250, f ) != NULL ) {
+      // Remove line endings
+      es = line;
+      while( *es != 0 ) {
+        if( *es == 10 ) *es = ' ';
+        if( *es == 13 ) *es = ' ';
+        es++;
+      }
       // Find entry start
       es = line; while( *es == ' ' && *es != 0 ) if( *++es == '#' ) *es = 0;
       if( *es != 0  ) {
@@ -206,9 +218,11 @@ static void read_rc( FILE *f ) {
               if( *++pe == '#' ) *pe = 0;
             }
             // Replace with null-char
-            *pl = 0;
+            *++pl = 0;
             
-            if(        strcmp( es, "w"      ) == 0 ) {
+            //printf( "RoboCortex [info]: Configuration - %s=%s\n", es, ps );
+            
+            if( strcmp( es, "w"      ) == 0 ) {
               if( cap_i >= 0 ) {
                 cap[ cap_i ].w = atoi( ps );
                 cap[ cap_i ].src.x = 0;
@@ -224,23 +238,28 @@ static void read_rc( FILE *f ) {
                 cap[ cap_i ].dst.y = 0;
                 cap[ cap_i ].dst.h = stream_h;
               } else stream_h = atoi( ps );
-            /*
             } else if( strcmp( es, "fps"    ) == 0 ) {
-              if( cap_i >= 0 ) printf( "RoboCortex [warning]: Configuration - fps in device section.\n" );
-              else stream_fps = atoi( ps );
-            */
+              fps = atoi( ps );
             } else if( strcmp( es, "comms"  ) == 0 ) {
-              if( cap_i >= 0 ) printf( "RoboCortex [warning]: Configuration - comms in device section.\n" );
-              else strcpy( serdev, ps );
-            } else if( strcmp( es, "comms"  ) == 0 ) {
-              if( cap_i >= 0 ) printf( "RoboCortex [warning]: Configuration - comms in device section.\n" );
-              else port = atoi( ps );
+              strcpy( serdev, ps );
+            } else if( strcmp( es, "port"  ) == 0 ) {
+              port = atoi( ps );
             } else if( strcmp( es, "device" ) == 0 ) {
               if( cap_i >= ( CAP_SOURCES - 1 ) ) printf( "RoboCortex [warning]: Configuration - too many capture sources.\n" );
               else {
                 cap_i++;
                 strcpy( cap[ cap_i ].device, ps );
               }
+            } else if( strcmp( es, "timeout_connection"  ) == 0 ) {
+              timeout_connection = atoi( ps );
+            } else if( strcmp( es, "timeout_control"  ) == 0 ) {
+              timeout_control = atoi( ps );
+            } else if( strcmp( es, "timeout_trust"  ) == 0 ) {
+              timeout_trust = atoi( ps );
+            } else if( strcmp( es, "timeout_glitch"  ) == 0 ) {
+              timeout_glitch = atoi( ps );
+            } else if( strcmp( es, "timeout_emoticon"  ) == 0 ) {
+              timeout_emoticon = atoi( ps );
             } else if( strcmp( es, "src_x"  ) == 0 ) {
               if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_x outside device section\n" );
               else cap[ cap_i ].src.x = atoi( ps );
@@ -273,7 +292,7 @@ static void read_rc( FILE *f ) {
       }
     }
   }
-  printf( "RoboCortex [info]: Configuration - stream is %ix%ix%ifps\n", stream_w, stream_h, stream_fps );
+  printf( "RoboCortex [info]: Configuration - stream is %ix%ix%ifps\n", stream_w, stream_h, fps );
   for( cap_count = 0; cap_count <= cap_i; cap_count++ ) {
     printf( "RoboCortex [info]: Configuration - capture %i:%s is %ix%i, %i:%ix%i:%i -> %i:%ix%i:%i\n",
       cap_count, cap[ cap_count ].device,
@@ -282,7 +301,6 @@ static void read_rc( FILE *f ) {
       cap[ cap_count ].dst.x, cap[ cap_count ].dst.w, cap[ cap_count ].dst.y, cap[ cap_count ].dst.h
     );
   }
-  fclose( f );
 }
 
 // Queues a packet for trusted (non-lossy) transmission
@@ -324,7 +342,7 @@ void trust_handler( client_t *p_client, char* data, int size ) {
           emoticon = EMO_ANGRY;
           break;
       }
-      if( emoticon > 1 ) emoticon_timeout = TIMEOUT_EMOTICON;
+      if( emoticon > 1 ) emoticon_timeout = timeout_emoticon;
       data[ n ] = ' ';
       data[ n + 1 ] = ' ';
     }
@@ -392,8 +410,8 @@ static client_t *clients_add( NET_ADDR *client ) {
       clients[ n ].trust_cli = 0xFF;
       clients[ n ].trust_srv = 0x00;
       clients[ n ].got_first = 0;
-      clients[ n ].timeout = TIMEOUT_CONNECTION;
-      clients[ n ].timer   = TIMEOUT_CONTROL;
+      clients[ n ].timeout = timeout_connection;
+      clients[ n ].timer   = timeout_control;
       if( client_first ) {
         client_last->next = &clients[ n ];
       } else {
@@ -573,7 +591,7 @@ int receiver( void *unused ) {
           // Send TIME+time
           net_send( &h_sock, queue_time( buffer, 4, p_client ), 4 + sizeof( int ), &cli_addr );
           SDL_mutexP( client_mx );
-          p_client->timeout = TIMEOUT_CONNECTION;
+          p_client->timeout = timeout_connection;
           SDL_mutexV( client_mx );
         } else if( memcmp( buffer, pkt_quit, 4 ) == 0 ) {
           // Abort connection
@@ -584,8 +602,8 @@ int receiver( void *unused ) {
           // Copy control data
           if( size >= 4 + sizeof( ctrl_data_t ) ) {
             SDL_mutexP( client_mx );
-            p_client->timeout = TIMEOUT_CONNECTION;
-            p_client->glitch = TIMEOUT_GLITCH;
+            p_client->timeout = timeout_connection;
+            p_client->glitch = timeout_glitch;
             SDL_mutexV( client_mx );
             memcpy( &p_client->ctrl, buffer + 4, sizeof( ctrl_data_t ) );
             // Initial control data, reset diff
@@ -694,28 +712,26 @@ int main( int argc, char *argv[] ) {
 #endif
 
   printf( "RoboCortex [info]: OHAI!\n\n" );
-
   atexit( close_message );
+	signal( SIGINT, terminate );
 
+  // Read configuration file
   if( argc > 1 ) rc_file = argv[ 1 ];
-
   cf = fopen( rc_file, "r" );
   if( cf == NULL ) {
     printf( "RoboCortex [error]: Cannot open configuration file %s\n", rc_file );
     exit( EXIT_CONFIG );
   }
-  
   read_rc( cf );
-
+  fclose( cf );
   if( cap_count == 0 ) {
     printf( "RoboCortex [error]: No capture sources\n" );
     exit( EXIT_NOSOURCE );
   }
 
+  // Initialize client array
   clients_init();
   
-	signal( SIGINT, terminate );
-
   // Initialize network
   if( net_init() < 0 ) {
     fprintf( stderr, "RoboCortex [error]: Network initialization failed\n" );
@@ -736,8 +752,8 @@ int main( int argc, char *argv[] ) {
       }
     }
   }
-  net_addr_init( &cli_addr, NET_ADDR_ANY, 0 );
 
+  // Initialize audio
   if( SDL_Init( SDL_INIT_AUDIO ) == 0 ) {
     atexit( SDL_Quit );
   } else {
@@ -749,7 +765,7 @@ int main( int argc, char *argv[] ) {
   for( n = 0; n < cap_count; n++ ) {
     cap_w = cap[ n ].w;
     cap_h = cap[ n ].h;
-    if( capture_init( cap[ n ].device, stream_fps, &cap_w, &cap_h ) < 0 ) {
+    if( capture_init( cap[ n ].device, fps, &cap_w, &cap_h ) < 0 ) {
       fprintf( stderr, "RoboCortex [error]: Unable to open capture device %s\n", cap[ n ].device );
       exit( EXIT_CAPTURE );
     }
@@ -774,10 +790,10 @@ int main( int argc, char *argv[] ) {
   
   param.i_width   = stream_w;
   param.i_height  = stream_h;
-  param.i_fps_num = stream_fps;
+  param.i_fps_num = fps;
   
   // Settings as explained by http://x264dev.multimedia.cx/archives/249
-    
+
   x264_param_parse( &param, "slice-max-size", "8192" ); /* Practically disables slicing.
   																											   Slicing is the splitting of frame data into
   																											   a series of NALs, each having a maximum size
@@ -989,7 +1005,7 @@ int main( int argc, char *argv[] ) {
         if( trust_first ) {
           memcpy( p_buffer + i_buffer, trust_first->data, trust_first->size );
           i_buffer += trust_first->size;
-          trust_timeout = TIMEOUT_TRUST;
+          trust_timeout = timeout_trust;
         }
       } else {
         trust_timeout--;
@@ -1007,9 +1023,9 @@ int main( int argc, char *argv[] ) {
       integrate_r = 0;
     }
 
-    // Delay 1/stream_fps seconds, constantly correct for processing overhead
+    // Delay 1/fps seconds, constantly correct for processing overhead
     time_diff = SDL_GetTicks() - time_target;
-    if( time_diff > 1000 / stream_fps ) { 
+    if( time_diff > 1000 / fps ) { 
       time_diff = 0;
       time_target = SDL_GetTicks(); // Reset on overflow
       printf( "RoboCortex [warning]: Encoder cannot keep up with desired FPS\n" );
@@ -1018,8 +1034,8 @@ int main( int argc, char *argv[] ) {
       time_diff = 0;
       printf( "RoboCortex [error]: SDL_Delay returns too fast\n" );
     }
-    time_target += 1000 / stream_fps;
-    SDL_Delay( ( 1000 / stream_fps ) - time_diff );
+    time_target += 1000 / fps;
+    SDL_Delay( ( 1000 / fps ) - time_diff );
 
     // Tick client timers
     clients_tick();
