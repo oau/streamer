@@ -24,7 +24,7 @@ w             320
 h             240
 ## Crop image
 src_x           0
-src_y          50
+src_y         150
 src_w         320
 src_h          60
 ## Draw at top of screen
