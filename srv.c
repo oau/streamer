@@ -871,6 +871,10 @@ int main( int argc, char *argv[] ) {
       }
       SDL_mutexV( trust_mx );
 
+      // plugin->stream
+      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+        if( plug->stream ) plug->stream( p_buffer, i_buffer );
+
       // Send DATA packet
       net_send( &h_sock, p_buffer, i_buffer, &client_first->client );
       

@@ -49,4 +49,6 @@ typedef struct {
   void ( *tick       )();
   // Called when a data packet is received from the client
   void ( *recv       )( void *data, unsigned char size );
+  // Called when a video packet has been encoded for transmission to client
+  void ( *stream     )( unsigned char *packet, int size );
 } pluginclient_t;
