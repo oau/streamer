@@ -9,6 +9,6 @@ The project compiles under Linux and Windows.
 The ./sam/ folder contains the speech synthesis library and must be compiled prior to compiling the server and client.
 SAM is an old TTS from the C64 (Software Automatic Mouth) and the source code is based on the assembly to C port by Sebastian Macke.
 
-To build on Windows you might want to save yourself the trouble of manually compiling several open-source projects and simply extract the necessary includes, pre-compiled libraries and dlls from the w32-precompiled.zip archive.
+To build on Windows you might want to save yourself the trouble of manually compiling several open-source projects and simply extract the necessary includes, pre-compiled libraries and dlls from the w32-precompiled.zip archive. Compiles as-is using MinGW.
 
 Project is developed and maintained by phrst and stg of Forskningsavdelningen - www.forskningsavd.se
