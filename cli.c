@@ -633,7 +633,7 @@ int main( int argc, char *argv[] ) {
   struct SwsContext *convertCtx;                 // Used in the scaling/conversion process
   AVPacket           avpkt;                      // Used in the decoding process
   SDL_Thread        *hReceiver;                  // Thread handle to UDP receiver
-  SDL_Rect           rect;                       // Used for various graphics operations
+  SDL_Rect           r;                          // Used for various graphics operations
   SDL_Surface       *live = NULL;                // Live decoded video surface
   char              *p_vis;                      // Pointer to speech visualization data
   int                b_fullscreen;               // Are we in fullscreen mode?
@@ -713,7 +713,7 @@ int main( int argc, char *argv[] ) {
     amask = 0xff000000;
 #endif
 
-  SDL_Surface* frame = SDL_CreateRGBSurface( SDL_SWSURFACE, 640, 480, 24, 0, 0, 0, 0 );
+  SDL_Surface* frame = SDL_CreateRGBSurface( SDL_SWSURFACE, screen_w, screen_h, 24, 0, 0, 0, 0 );
 
   if( !frame ) {
     printf( "RoboCortex [error]: Unable to allcate SDL surface\n" );
@@ -824,7 +824,7 @@ int main( int argc, char *argv[] ) {
 
           // Create scaling & color-space conversion context
           convertCtx = sws_getContext( pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt,
-            frame->w, frame->h, PIX_FMT_BGR24, SWS_AREA, NULL, NULL, NULL);
+            frame->w, frame->h, PIX_FMT_RGB24, SWS_AREA, NULL, NULL, NULL);
 
           // Scale and convert the frame
           sws_scale( convertCtx, (const uint8_t**) pFrame->data, pFrame->linesize, 0,
@@ -866,11 +866,7 @@ int main( int argc, char *argv[] ) {
         SDL_BlitSurface( live, NULL, screen, NULL );
       } else {
         // Clear screen
-        rect.x = 0;
-        rect.y = 0;
-        rect.w = 640;
-        rect.h = 480;
-        SDL_FillRect( screen, &rect, 0 );
+        SDL_FillRect( screen, rect( &r, 0, 0, screen->w, screen->h ), 0 );
       }
 
       if( speech_vis( &p_vis ) == 0 ) {
@@ -901,15 +897,9 @@ int main( int argc, char *argv[] ) {
     } else {      
 
       // Clear screen
-      rect.x = 0;
-      rect.y = 0;
-      rect.w = 640;
-      rect.h = 480;
-      SDL_FillRect( screen, &rect, 0 );
+      SDL_FillRect( screen, rect( &r, 0, 0, screen->w, screen->h ), 0 );
       // Draw logo
-      rect.x = 170;
-      rect.y = 60;
-      SDL_BlitSurface( spr_logo, NULL, screen, &rect );
+      SDL_BlitSurface( spr_logo, NULL, screen, rect( &r, 170, 60, 0, 0 ) );
 
       switch( state ) {
         case STATE_CONNECTING:

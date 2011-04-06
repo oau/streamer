@@ -429,6 +429,7 @@ static void clients_tick() {
       }
 	    trust_clear();
     }    
+    if( client_first ) if( client_first->timer < 0 ) client_first->timer = 0;
   }
   SDL_mutexV( client_mx );
 }
@@ -515,7 +516,7 @@ int receiver( void *unused ) {
   }
 }
 
-// Convert, crop, scale and blit all BGR24 capture sources onto YUV420P destination
+// Convert, crop, scale and blit all RGB24 capture sources onto YUV420P destination
 static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
   uint8_t* r_dst[ 3 ];
   const uint8_t *r_src;
@@ -631,7 +632,7 @@ int main( int argc, char *argv[] ) {
   // Initialize scaling and conversion contexts
   atexit( sws_close );
   for( n = 0; n < cap_count; n++ ) {
-    cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_BGR24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
+    cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_RGB24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
     if( cap[ n ].swsCtx == NULL ) {
       printf( "RoboCortex [error]: Unable to initialize conversion context\n" );
       exit( EXIT_SWSCALE );
