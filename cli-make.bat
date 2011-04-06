@@ -46,3 +46,16 @@ ECHO Done!
 :ERROR
 
 ENDLOCAL
+
+IF "%1"=="-run" GOTO RUN
+
+GOTO FINAL
+
+:RUN
+ECHO Running application...
+cd bin
+cli
+cd ..
+GOTO FINAL
+
+:FINAL

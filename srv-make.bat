@@ -5,6 +5,10 @@ SET CFLAGS=-g
 SET LFLAGS=-g
 SET STRIP=NO
 
+IF "%1"=="-service" GOTO SERVICE_STOP
+
+:BEGIN
+
 ECHO Compiling capture.cpp...
 g++ capture.cpp -c %CFLAGS% -I./include
 IF ERRORLEVEL 1 GOTO ERROR
@@ -43,3 +47,27 @@ ECHO Done!
 :ERROR
 
 ENDLOCAL
+
+IF "%1"=="-run" GOTO RUN
+IF "%1"=="-service" GOTO SERVICE_START
+
+GOTO FINAL
+
+:SERVICE_STOP
+ECHO Stopping KiwiRayServer...
+sc stop KiwiRayServer
+GOTO BEGIN
+
+:SERVICE_START
+ECHO Starting KiwiRayServer...
+sc start KiwiRayServer
+GOTO FINAL
+
+:RUN
+ECHO Running application...
+cd bin
+srv
+cd ..
+GOTO FINAL
+
+:FINAL

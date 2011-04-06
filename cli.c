@@ -953,7 +953,7 @@ int main( int argc, char *argv[] ) {
           temp /= 60;
           text_time[  8 ] = '0' + ( temp % 10 );
           text_time[  7 ] = '0' + ( temp / 10 );
-          term_write( 9, ( term_h >> 1 ) + 10, text_time, FONT_GREEN );
+          term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 10, text_time, FONT_GREEN );
           if( statec == 0 ) {
             if( ++retry == MAX_RETRY ) {
               state = STATE_ERROR;

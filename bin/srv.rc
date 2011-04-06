@@ -18,6 +18,11 @@
 #timeout_trust         8  #before retransmitting trusted packets (8)
 #timeout_glitch        2  #before robot stops moving if a connection glitches/is lost (2)
 
+## Client management
+queue                 50  #max number of clients in queue (10)
+                          #0 will disable queueing and is used when a direct connection
+                          #to a single client is used instead of multi-client support.
+
 ## Main camera
 device                0  #device index for windows (-1 for list), device path for linux
 cap_w               320  #capture width

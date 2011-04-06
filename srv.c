@@ -87,23 +87,25 @@ enum exitcode_e {
 static NET_SOCK h_sock;
 static NET_ADDR srv_addr;
 static NET_ADDR cli_addr;
-static int port = PORT;
+static      int port = PORT;
 
 // Locals
 static int quit     = 0; // Time to quit (SIGINT etc.)
 static int do_intra = 0; // Time to intra-refresh (New client connected)
 
 // Clients linked-list array
-static client_t  clients[ MAX_CLIENTS ];
-static client_t *client_first = NULL;
-static client_t *client_last  = NULL;
+static       int  max_clients = MAX_CLIENTS;
+static  client_t *clients;
+static  client_t *client_first = NULL;
+static  client_t *client_last  = NULL;
 static SDL_mutex *client_mx;
+static       int  direct;
 
 // Trusted data linked_list & mutex
 static linked_buf_t *trust_first = NULL;
 static linked_buf_t *trust_last = NULL;
-static int trust_timeout;
-static SDL_mutex *trust_mx;
+static          int  trust_timeout;
+static SDL_mutex    *trust_mx;
 
 // Packet types
 static char pkt_data[ 4 ] = "DATA";
@@ -119,15 +121,15 @@ static char config_default[] = "srv.rc"; // Default configuration file
 
 // Capture
 static capture_t cap[ CAP_SOURCES ];
-static int cap_count = -1;
+static       int cap_count = -1;
 
 // Encoding
-static int stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
-static x264_t* encoder;
-static x264_picture_t pic_in, pic_out;
+static            int  stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
+static         x264_t *encoder;
+static x264_picture_t  pic_in, pic_out;
 
 // Threads
-static SDL_Thread    *hReceiver;
+static SDL_Thread *hReceiver;
 
 // Timeouts
 static int timeout_connection = TIMEOUT_CONNECTION;
@@ -202,6 +204,8 @@ static int config_set( char *value, char *token ) {
       fps = atoi( value );
     } else if( strcmp( token, "port" ) == 0 ) {
       port = atoi( value );
+    } else if( strcmp( token, "queue" ) == 0 ) {
+      max_clients = atoi( value );
     } else if( strcmp( token, "timeout_connection" ) == 0 ) {
       timeout_connection = atoi( value );
     } else if( strcmp( token, "timeout_control" ) == 0 ) {
@@ -320,12 +324,72 @@ static void trust_clear() {
   trust_timeout = 0;
 }
 
+// Add client, return index or -1 if queue is full
+static client_t *clients_add( NET_ADDR *client ) {
+  int n, pid;
+  client_t *p_ret = NULL;
+  // Iterate client table
+  SDL_mutexP( client_mx );
+  if( direct ) {
+    if( memcmp( clients, client, sizeof( NET_ADDR ) ) != 0 ) {
+      memcpy( clients, client, sizeof( NET_ADDR ) );
+      clients->trust_cli = 0xFF;
+      clients->trust_srv = 0x00;
+      clients->got_first = 0;
+      clients->timeout = timeout_connection;
+      do_intra = 1;
+      // plugin->connected( 1 )
+      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+        if( plug->connected ) plug->connected( 1 );
+    }
+    if( client_first == NULL ) {
+      client_first = clients;
+      host.ctrl = &client_first->ctrl.ctrl;
+      host.diff = &client_first->diff;
+    }
+    p_ret = clients;
+  } else {
+    for( n = 0; n < max_clients; n++ ) {
+    	// Find free client entry
+      if( !clients[ n ].timeout ) {
+      	// Add client to table
+        printf( "RoboCortex [info]: Client %i connected\n", n );
+        memcpy( &clients[ n ].client, client, sizeof( NET_ADDR ) );
+        clients[ n ].next = NULL;
+        clients[ n ].prev = client_last;
+        clients[ n ].trust_cli = 0xFF;
+        clients[ n ].trust_srv = 0x00;
+        clients[ n ].got_first = 0;
+        clients[ n ].timeout = timeout_connection;
+        clients[ n ].timer   = timeout_control;
+        if( client_first ) {
+          client_last->next = &clients[ n ];
+        } else {
+          do_intra = 1; // Intra-refresh needed
+          trust_clear();
+          client_first = &clients[ n ];
+          host.ctrl = &client_first->ctrl.ctrl;
+          host.diff = &client_first->diff;
+          // plugin->connected( 1 )
+          for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+            if( plug->connected ) plug->connected( 1 );
+        }
+        client_last = &clients[ n ];
+        p_ret = &clients[ n ];
+        break;
+      }
+    }
+  }
+  SDL_mutexV( client_mx );
+  return( p_ret );
+}
+
 // Find client index
 static client_t *clients_find( NET_ADDR *client ) {
   int n;
   client_t *p_ret = NULL;
   SDL_mutexP( client_mx );
-  for( n = 0; n < MAX_CLIENTS; n++ ) {
+  for( n = 0; n < max_clients; n++ ) {
     if( clients[ n ].timeout ) {
       if( net_addr_get( &clients[ n ].client ) == net_addr_get( client ) ) {
         if( net_port_get( &clients[ n ].client ) == net_port_get( client ) ) {
@@ -336,46 +400,7 @@ static client_t *clients_find( NET_ADDR *client ) {
     }
   }
   SDL_mutexV( client_mx );
-  return( p_ret );
-}
-
-// Add client, return index or -1 if queue is full
-static client_t *clients_add( NET_ADDR *client ) {
-  int n, pid;
-  client_t *p_ret = NULL;
-  // Iterate client table
-  SDL_mutexP( client_mx );
-  for( n = 0; n < MAX_CLIENTS; n++ ) {
-  	// Find free client entry
-    if( !clients[ n ].timeout ) {
-    	// Add client to table
-      printf( "RoboCortex [info]: Client %i connected\n", n );
-      memcpy( &clients[ n ].client, client, sizeof( NET_ADDR ) );
-      clients[ n ].next = NULL;
-      clients[ n ].prev = client_last;
-      clients[ n ].trust_cli = 0xFF;
-      clients[ n ].trust_srv = 0x00;
-      clients[ n ].got_first = 0;
-      clients[ n ].timeout = timeout_connection;
-      clients[ n ].timer   = timeout_control;
-      if( client_first ) {
-        client_last->next = &clients[ n ];
-      } else {
-        do_intra = 1; // Intra-refresh needed
-        trust_clear();
-        client_first = &clients[ n ];
-        host.ctrl = &client_first->ctrl.ctrl;
-        host.diff = &client_first->diff;
-        // plugin->connected( 1 )
-        for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
-          if( plug->connected ) plug->connected( 1 );
-      }
-      client_last = &clients[ n ];
-      p_ret = &clients[ n ];
-      break;
-    }
-  }
-  SDL_mutexV( client_mx );
+  if( direct ) p_ret = clients_add( client );
   return( p_ret );
 }
 
@@ -404,7 +429,7 @@ static void clients_tick() {
   int n, pid;
   // Count down timeouts
   SDL_mutexP( client_mx );
-  for( n = 0; n < MAX_CLIENTS; n++ ) {
+  for( n = 0; n < max_clients; n++ ) {
   	if( clients[ n ].timeout ) {
   		clients[ n ].timeout--;
   		if( clients[ n ].timeout == 0 ) {
@@ -549,6 +574,7 @@ void picture_close()   { x264_picture_clean( &pic_in );                }
 void trust_mx_close()  { SDL_DestroyMutex( trust_mx );                 }
 void client_mx_close() { SDL_DestroyMutex( client_mx );                }
 void receiver_close()  { SDL_KillThread( hReceiver );                  }
+void clients_close()   { free( clients );                              }
 void close_message()   { printf( "\nRoboCortex [info]: KTHXBYE!\n" ); }
 void sws_close() {
   int n;
@@ -591,6 +617,16 @@ int main( int argc, char *argv[] ) {
     printf( "RoboCortex [error]: No capture sources\n" );
     exit( EXIT_NOSOURCE );
   }
+  if( max_clients == 0 ) {
+    max_clients = 1;
+    direct = 1;
+    timeout_control = 0;
+  }
+  
+  // Allocate client memory
+  clients = malloc( sizeof( client_t ) * max_clients );
+  memset( clients, 0, sizeof( client_t ) * max_clients );
+  atexit( clients_close );
 
   // Initialize network
   if( net_init() < 0 ) {
