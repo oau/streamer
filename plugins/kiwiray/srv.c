@@ -85,7 +85,7 @@ const unsigned  char   emotidata[ 4 ][ 24 ] = {
 };
 
 // This thread handles KiwiRay communications
-static void commthread() {
+static int commthread() {
   int b_working = 0;
   unsigned char n;
   unsigned char emotilast = 255;
@@ -95,13 +95,13 @@ static void commthread() {
   b_working = ( serial_open( serdev ) == 0 );
   if( !b_working ) {
     printf( "KiwiRay [warning]: Unable to open %s, disabling serial\n", serdev );
-    return;
+    return( 1 );
   }
   b_working = !serial_params( "115200,n,8,1" );
   if( !b_working ) {
     printf( "KiwiRay [warning]: Unable to configure %s, disabling serial\n", serdev );
     serial_close();
-    return;
+    return( 1 );
   }
   while( 1 ) {
     // Re-open on errors
@@ -129,6 +129,7 @@ static void commthread() {
     }
     host->thread_delay( 20 ); // roughly 50 times second
   }
+  return( 0 );
 }
 
 static void process_data( void* p_data, unsigned char size ) {

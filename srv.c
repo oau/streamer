@@ -15,9 +15,6 @@
 #define MAX_PLUGINS          10
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
 
-// Audio
-//#define DISABLE_SPEECH          // Disables speech
-
 // Save the stream
 //#define SAVE_STREAM            "server.h264"
 
@@ -60,22 +57,14 @@ struct client_t {
 };
 typedef struct client_t client_t;
 
-// Rectangle
-typedef struct {
-  int x;
-  int y;
-  int w;
-  int h;
-} rect_t;
-
 // Capture setting
 typedef struct {
   int enable;
   char device[ CFG_VALUE_MAX_SIZE ];  
   int dev;
   int w, h;
-  rect_t src;
-  rect_t dst;
+  SDL_Rect src;
+  SDL_Rect dst;
   uint8_t *data;
   struct SwsContext* swsCtx;
 } capture_t;
@@ -126,12 +115,11 @@ static char pkt_full[ 4 ] = "FULL";
 static char pkt_quit[ 4 ] = "QUIT";
 
 // Configuration
-static char fn_rc[] = "srv.rc"; // Default configuration file
-static char *rc_file = fn_rc;
+static char config_default[] = "srv.rc"; // Default configuration file
 
 // Capture
 static capture_t cap[ CAP_SOURCES ];
-static int cap_count;
+static int cap_count = -1;
 
 // Encoding
 static int stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
@@ -177,7 +165,7 @@ static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
 }
 
 // Handles trusted data packets
-void trust_handler( client_t *p_client, unsigned char* data, int size ) {
+static void trust_handler( client_t *p_client, unsigned char* data, int size ) {
   unsigned char n;
   int pid;
   uint32_t ident;
@@ -203,79 +191,31 @@ void trust_handler( client_t *p_client, unsigned char* data, int size ) {
   }
 }
 
-// Reads one configuration line
-static int cfg_read( char **value, char **token, FILE *f ) {
-  char line[ CFG_VALUE_MAX_SIZE + CFG_TOKEN_MAX_SIZE + 3 ] = { ' ' };
-  char *es, *ps, *pe, *pl;
-  while( !feof( f ) ) {
-    if( fgets( line + 1, sizeof( line ) - 1, f ) != NULL ) {
-      // Remove line endings
-      es = line; while( *es != 0 ) if( *es == 10 || *es == 13 ) *es++ = ' '; else es++;
-      // Find entry start
-      es = line; while( *es == ' ' && *es != 0 ) if( *++es == '#' ) *es = 0;
-      if( *es != 0  ) {
-        // Find entry end
-        pe = es; while( *pe != ' ' && *pe != 0 ) if( *++pe == '#' ) *pe = 0;
-        if( *pe != 0 ) {
-          // Null-terminate
-          *pe = 0;
-          // Find parameter start
-          ps = pe + 1; while( *ps == ' ' && *ps != 0 ) if( *++ps == '#' ) *ps = 0;
-          if( *ps != 0 ) {
-            // Find parameter end
-            pe = ps;
-            while( *pe != 0 ) {
-              if( *pe != ' ' ) pl = pe;
-              if( *++pe == '#' ) *pe = 0;
-            }
-            // Null-terminate
-            *++pl = 0;
-            //printf( "RoboCortex [info]: Configuration - %s=%s\n", es, ps );
-            *token = es;
-            *value = ps;
-            return( 1 );
-          }
-        }
-      }
-    }
-  }
-  return( 0 );
-  
-}
-
-static void cfg_parse( FILE *f ) {
-  char *token, *value;
-  int  cap_i = -1;
-  
-  printf( "RoboCortex [info]: Reading configuration...\n" );
-  
-  while( cfg_read( &value, &token, f ) ) {
+static int config_set( char *value, char *token ) {
+  int n;
+  if( token != NULL ) {
     if( strcmp( token, "w" ) == 0 ) {
-      if( cap_i >= 0 ) {
-        cap[ cap_i ].w = atoi( value );
-        cap[ cap_i ].src.x = 0;
-        cap[ cap_i ].src.w = cap[ cap_i ].w;
-        cap[ cap_i ].dst.x = 0;
-        cap[ cap_i ].dst.w = stream_w;
+      if( cap_count >= 0 ) {
+        cap[ cap_count ].w = atoi( value );
+        rect( &cap[ cap_count ].src, 0, cap[ cap_count ].src.y, cap[ cap_count ].w, cap[ cap_count ].src.h );
+        rect( &cap[ cap_count ].dst, 0, cap[ cap_count ].dst.y, stream_w, cap[ cap_count ].dst.h );
       } else stream_w = atoi( value );
     } else if( strcmp( token, "h" ) == 0 ) {
-      if( cap_i >= 0 ) {
-        cap[ cap_i ].h = atoi( value );
-        cap[ cap_i ].src.y = 0;
-        cap[ cap_i ].src.h = cap[ cap_i ].h;
-        cap[ cap_i ].dst.y = 0;
-        cap[ cap_i ].dst.h = stream_h;
+      if( cap_count >= 0 ) {
+        cap[ cap_count ].h = atoi( value );
+        rect( &cap[ cap_count ].src, cap[ cap_count ].src.x, 0, cap[ cap_count ].src.w, cap[ cap_count ].h );
+        rect( &cap[ cap_count ].dst, cap[ cap_count ].dst.x, 0, cap[ cap_count ].dst.w, stream_h );
       } else stream_h = atoi( value );
     } else if( strcmp( token, "fps" ) == 0 ) {
       fps = atoi( value );
     } else if( strcmp( token, "port" ) == 0 ) {
       port = atoi( value );
     } else if( strcmp( token, "device" ) == 0 ) {
-      if( cap_i >= ( CAP_SOURCES - 1 ) ) printf( "RoboCortex [warning]: Configuration - too many capture sources.\n" );
+      if( cap_count >= ( CAP_SOURCES - 1 ) ) printf( "Config [warning]: too many capture sources.\n" );
       else {
-        cap_i++;
-        cap[ cap_i ].enable = 1;
-        strcpy( cap[ cap_i ].device, value );
+        cap_count++;
+        cap[ cap_count ].enable = 1;
+        strcpy( cap[ cap_count ].device, value );
       }
     } else if( strcmp( token, "timeout_connection" ) == 0 ) {
       timeout_connection = atoi( value );
@@ -286,100 +226,54 @@ static void cfg_parse( FILE *f ) {
     } else if( strcmp( token, "timeout_glitch" ) == 0 ) {
       timeout_glitch = atoi( value );
     } else if( strcmp( token, "src_x" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_x outside device section\n" );
-      else cap[ cap_i ].src.x = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: src_x outside device section\n" );
+      else cap[ cap_count ].src.x = atoi( value );
     } else if( strcmp( token, "src_y" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_y outside device section\n" );
-      else cap[ cap_i ].src.y = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: src_y outside device section\n" );
+      else cap[ cap_count ].src.y = atoi( value );
     } else if( strcmp( token, "src_w" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_w outside device section\n" );
-      else cap[ cap_i ].src.w = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: src_w outside device section\n" );
+      else cap[ cap_count ].src.w = atoi( value );
     } else if( strcmp( token, "src_h" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - src_h outside device section\n" );
-      else cap[ cap_i ].src.h = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: src_h outside device section\n" );
+      else cap[ cap_count ].src.h = atoi( value );
     } else if( strcmp( token, "dst_x" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_x outside device section\n" );
-      else cap[ cap_i ].dst.x = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: dst_x outside device section\n" );
+      else cap[ cap_count ].dst.x = atoi( value );
     } else if( strcmp( token, "dst_y" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_y outside device section\n" );
-      else cap[ cap_i ].dst.y = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: dst_y outside device section\n" );
+      else cap[ cap_count ].dst.y = atoi( value );
     } else if( strcmp( token, "dst_w" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_w outside device section\n" );
-      else cap[ cap_i ].dst.w = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: dst_w outside device section\n" );
+      else cap[ cap_count ].dst.w = atoi( value );
     } else if( strcmp( token, "dst_h" ) == 0 ) {
-      if( cap_i < 0 ) printf( "RoboCortex [warning]: Configuration - dst_h outside device section\n" );
-      else cap[ cap_i ].dst.h = atoi( value );
+      if( cap_count < 0 ) printf( "Config [warning]: dst_h outside device section\n" );
+      else cap[ cap_count ].dst.h = atoi( value );
     } else if( strcmp( token, "plugin" ) == 0 ) {
-      break;
-    } else {
-      printf( "RoboCortex [warning]: Configuration - unknown entry %s\n", token );
+      return( 1 );
+    } else printf( "Config [warning]: unknown entry %s\n", token );
+  } else {
+    printf( "Config [info]: stream is %ix%ix%ifps\n", stream_w, stream_h, fps );
+    for( n = 0; n <= cap_count; n++ ) {
+      printf( "Config [info]: capture %i:%s is %ix%i, %i:%ix%i:%i -> %i:%ix%i:%i\n",
+        n, cap[ n ].device, cap[ n ].w, cap[ n ].h,
+        cap[ n ].src.x, cap[ n ].src.w, cap[ n ].src.y, cap[ n ].src.h,
+        cap[ n ].dst.x, cap[ n ].dst.w, cap[ n ].dst.y, cap[ n ].dst.h
+      );
     }
+    cap_count = n;
   }
-  printf( "RoboCortex [info]: Configuration - stream is %ix%ix%ifps\n", stream_w, stream_h, fps );
-  for( cap_count = 0; cap_count <= cap_i; cap_count++ ) {
-    printf( "RoboCortex [info]: Configuration - capture %i:%s is %ix%i, %i:%ix%i:%i -> %i:%ix%i:%i\n",
-      cap_count, cap[ cap_count ].device,
-      cap[ cap_count ].w, cap[ cap_count ].h,
-      cap[ cap_count ].src.x, cap[ cap_count ].src.w, cap[ cap_count ].src.y, cap[ cap_count ].src.h,
-      cap[ cap_count ].dst.x, cap[ cap_count ].dst.w, cap[ cap_count ].dst.y, cap[ cap_count ].dst.h
-    );
-  }
-}
-
-static int plug_thread( void *pThread ) {
-  ( ( void( * )() )pThread )();
   return( 0 );
 }
 
-static void* plug_thrstart( void( *pThread )() ) {
-  return( SDL_CreateThread( plug_thread, ( void* )pThread ) );
-}
-
-static void plug_thrstop( void* pHandle ) {
-  SDL_KillThread( pHandle );
-}
-
-static void plug_thrdelay( int delay ) {
-  SDL_Delay( delay );
-}
-
-static void plug_send( void* data, unsigned char size ) {
-  trust_queue( plug->ident, data, size );
-}
-
-static int plug_cfg( char* dst, char* req_token ) {
-  FILE *cf;
-  int ret = 0;
-  char *value, *token;
-  cf = fopen( rc_file, "r" );
-  if( cf == NULL ) {
-    printf( "RoboCortex [error]: Cannot open configuration file %s\n", rc_file );
-  } else {
-    while( cfg_read( &value, &token, cf ) ) {
-      if( strcmp( token, "plugin" ) == 0 ) {
-        if( strlen( value ) == 4 ) {
-          if( memcmp( value, &plug->ident, 4 ) == 0 ) {
-            while( cfg_read( &value, &token, cf ) ) {
-              if( strcmp( token, "plugin" ) == 0 ) break;
-              if( strcmp( token, req_token ) == 0 ) {
-                strcpy( dst, value );
-                ret = 1;
-                break;
-              }
-            }
-            break;
-          }
-        }
-      }
-    }
-  }
-  fclose( cf );
-  return( ret );
-}
-
-static void plug_cap( int dev, int enable ) {
-  if( dev < cap_count ) cap[ dev ].enable = enable;
-}
+// Plugin helpers
+static  int  plug_thread  ( void *pThread ) { return( ( ( int( * )() )pThread )() ); }
+static void* plug_thrstart( int( *pThread )() ) { return( SDL_CreateThread( plug_thread, ( void* )pThread ) ); }
+static void  plug_thrstop ( void* pHandle ) { SDL_KillThread( pHandle ); }
+static void  plug_thrdelay( int delay ) { SDL_Delay( delay ); }
+static void  plug_send    ( void* data, unsigned char size ) { trust_queue( plug->ident, data, size ); }
+static void  plug_cap     ( int dev, int enable ) { if( dev < cap_count ) cap[ dev ].enable = enable; }
+static  int  plug_cfg     ( char* dst, char* req_token ) { return( config_plugin( ( char* )&plug->ident, dst, req_token ) ); }
 
 static void load_plugins() {
   int pid;
@@ -418,15 +312,6 @@ static void trust_clear() {
   }
   SDL_mutexV( trust_mx );
   trust_timeout = 0;
-}
-
-// Initialize client data
-static void clients_init() {
-  int n;
-  for( n = 0; n < MAX_CLIENTS; n++ ) {
-    clients[ n ].timeout = 0;
-    clients[ n ].index   = n;
-  }
 }
 
 // Find client index
@@ -528,7 +413,7 @@ static void clients_tick() {
     if( client_first->glitch ) client_first->glitch--;
     if( --client_first->timer == 0 || client_first->timeout == 0 ) {
     	// Time for client switch
-      printf( "RoboCortex [info]: Client %i disconnected (time up)\n", client_first->index );
+      printf( "RoboCortex [info]: Client disconnected (time up)\n" );
       client_first = client_first->next;
       host.ctrl = &client_first->ctrl.ctrl;
       host.diff = &client_first->diff;
@@ -691,22 +576,15 @@ int main( int argc, char *argv[] ) {
 	signal( SIGINT, terminate );
 
   // Read configuration file
-  if( argc > 1 ) rc_file = argv[ 1 ];
-  cf = fopen( rc_file, "r" );
-  if( cf == NULL ) {
-    printf( "RoboCortex [error]: Cannot open configuration file %s\n", rc_file );
-    exit( EXIT_CONFIG );
-  }
-  cfg_parse( cf );
-  fclose( cf );
+  config_rc = ( argc > 1 ? argv[ 1 ] : config_default );
+  config_parse( config_set );
+
+  // Validate configuration
   if( cap_count == 0 ) {
     printf( "RoboCortex [error]: No capture sources\n" );
     exit( EXIT_NOSOURCE );
   }
 
-  // Initialize client array
-  clients_init();
-  
   // Initialize network
   if( net_init() < 0 ) {
     fprintf( stderr, "RoboCortex [error]: Network initialization failed\n" );

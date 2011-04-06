@@ -43,6 +43,8 @@ typedef struct {
   void ( *help_add )( char* text );
   // Use TTS to play back the specified text
   void ( *speak_text )( char* );
+  // Draws a popup box
+  void ( *draw_box )( unsigned char x, unsigned char y, unsigned char w, unsigned char h, SDL_Surface *s );
   // Draws wu-lines
   void ( *draw_wuline )( int x0, int y0, int x1, int y1, uint32_t color );
 } pluginhost_t;

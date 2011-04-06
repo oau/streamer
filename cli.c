@@ -81,7 +81,8 @@ static    disp_data_t  disp_data;                       // Data from latest DISP
 static    SDL_Surface *spr_logo;                            // Image resources
 static    SDL_Surface *spr_box; 
 static       NET_ADDR  srv_addr;                        // Server address
-static            int  port = DEFAULT_PORT;             // Server port
+static       uint32_t  server;                          // Server ip
+static       uint16_t  port = DEFAULT_PORT;             // Server port
 static    SDL_Surface *screen;                          // Screen surface
 static            int  screen_w, screen_h, screen_bpp;  // Screen parameters
 static       NET_SOCK  h_sock;                          // Socket handle
@@ -102,9 +103,10 @@ static  unsigned char  layout = KL_QWERTY;
 static         SDLKey  keymap[ KM_SIZE ];               // Keyboard remapping
 static   unsigned int  message_timeout = 0;
 static    ctrl_data_t  ctrl;                            // Part of CTRL packet
+static            int  help_shown;                      // Help is displayed?
 
 // Help texts
-static           char  help[ 32 ][ 33 ] = {
+static           char  help[ 16 ][ 33 ] = {
   { "CONTROLS: WASD + MOUSE" },
   { "L: TOGGLE QWERTY, DVORAK, AZERTY" },
   { "H: SHOW/HIDE HELP" },
@@ -125,39 +127,13 @@ static pluginclient_t *cursor_hook;
 static pluginclient_t *keyboard_hook;
 static pluginclient_t *keyboard_binds[ SDLK_LAST ];
 
+// Configuration
+static char config_default[] = "cli.rc"; // Default configuration file
+
 // Display message
 static void message( char* text ) {
   term_write( 1, 27, text, FONT_RED );
   message_timeout = 125;
-}
-
-// Switches keyboard layout
-static void set_layout( unsigned char new_layout ) {
-  // Mapping schemes for QWERTY (WASD) Dvorak (,AOE) and AZERTY (ZQSD)
-  layout = new_layout % KL_SIZE;
-  switch( layout ) {
-    case KL_QWERTY:
-      keymap[ KM_UP ]    = SDLK_w;
-      keymap[ KM_LEFT ]  = SDLK_a;
-      keymap[ KM_DOWN ]  = SDLK_s;
-      keymap[ KM_RIGHT ] = SDLK_d;
-      message( "SWITCHED TO QWERTY" );
-      break;
-    case KL_DVORAK:
-      keymap[ KM_UP ]    = SDLK_COMMA;
-      keymap[ KM_LEFT ]  = SDLK_a;
-      keymap[ KM_DOWN ]  = SDLK_o;
-      keymap[ KM_RIGHT ] = SDLK_e;
-      message( "SWITCHED TO DVORAK" );
-      break;
-    case KL_AZERTY:
-      keymap[ KM_UP ]    = SDLK_z;
-      keymap[ KM_LEFT ]  = SDLK_q;
-      keymap[ KM_DOWN ]  = SDLK_s;
-      keymap[ KM_RIGHT ] = SDLK_d;
-      message( "SWITCHED TO AZERTY" );
-      break;
-  }
 }
 
 // Queues a packet for trusted (non-lossy) transmission
@@ -184,7 +160,7 @@ static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
 }
 
 // Handles trusted data packets
-void trust_handler( char* data, int size ) {
+static void trust_handler( char* data, int size ) {
   int len, pid;
   uint32_t ident;
   if( size == 0 ) return;
@@ -303,6 +279,27 @@ static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
    SDL_UnlockSurface( screen );
 }
 
+// Draws a popup-box
+static void draw_box( unsigned char x, unsigned char y, unsigned char w, unsigned char h, SDL_Surface *s ) {
+  SDL_Rect src, dst;
+  unsigned char xx, yy;
+  SDL_BlitSurface( spr_box, rect( &src, 0, 0, 32, 32 ), s, rect( &dst, x << 4, y << 4, 32, 32 ) );
+  SDL_BlitSurface( spr_box, rect( &src, 48, 0, 32, 32 ), s, rect( &dst, ( x + w - 2 ) << 4, y << 4, 32, 32 ) );
+  SDL_BlitSurface( spr_box, rect( &src, 0, 48, 32, 32 ), s, rect( &dst, x << 4, ( y + h - 2 ) << 4, 32, 32 ) );
+  SDL_BlitSurface( spr_box, rect( &src, 48, 48, 32, 32 ), s, rect( &dst, ( x + w - 2 ) << 4, ( y + h - 2 ) << 4, 32, 32 ) );
+  for( xx = x + 2; xx < x + w - 2; xx++ ) {
+    SDL_BlitSurface( spr_box, rect( &src, 32, 0, 16, 32 ), s, rect( &dst, xx << 4, y << 4, 16, 16 ) );
+    SDL_BlitSurface( spr_box, rect( &src, 32, 48, 16, 32 ), s, rect( &dst, xx << 4, ( y + h - 2 ) << 4, 16, 16 ) );
+  }
+  for( yy = y + 2; yy < y + h - 2; yy++ ) {
+    SDL_BlitSurface( spr_box, rect( &src, 0, 32, 32, 16 ), s, rect( &dst, x << 4, yy << 4, 16, 16 ) );
+    SDL_BlitSurface( spr_box, rect( &src, 48, 32, 32, 16 ), s, rect( &dst, ( x + w - 2 ) << 4, yy << 4, 16, 16 ) );
+    for( xx = x + 2; xx < x + w - 2; xx++ ) {
+      SDL_BlitSurface( spr_box, rect( &src, 32, 32, 16, 16 ), s, rect( &dst, xx << 4, yy << 4 , 16, 16 ) );
+    }
+  }
+}
+
 static int plug_keybind( int key ) {
   // TODO: block reserved keys
   if( keyboard_binds[ key ] == NULL ) {
@@ -354,9 +351,7 @@ static void plug_send( void *data, unsigned char size ) {
 }
 
 static void plug_help( char *text ) {
-  if( strlen( text ) <= 32 ) {
-    strcpy( help[ help_count++ ], text );
-  }
+  if( strlen( text ) <= 32 && help_count < 16 ) strcpy( help[ help_count++ ], text );
 }
 
 static void plug_wu( int x0, int y0, int x1, int y1, uint32_t color ) {
@@ -382,6 +377,7 @@ static void load_plugins() {
   host.help_add         = plug_help;
   host.speak_text       = speech_queue;
   host.draw_wuline      = plug_wu;
+  host.draw_box         = draw_box;
 
   printf( "RoboCortex [info]: Loading plugins...\n" );
   // Load kiwiray plugin
@@ -415,15 +411,18 @@ static char UnicodeChar( int uni ){
 
 // Initialize graphical resources   
 static void resource_init() {
-  SDL_Surface* temp;
-  temp = SDL_LoadBMP( "logo.bmp" );
-  if( !temp ) printf( "RoboCortex [error]: Unable to load logo.bmp\n" );
-  spr_logo = SDL_DisplayFormat( temp );
-  SDL_FreeSurface( temp );
-  temp = SDL_LoadBMP( "box.bmp" );
-  if( !temp ) printf( "RoboCortex [error]: Unable to load box.bmp\n" );
-  spr_box = SDL_DisplayFormat( temp );
-  SDL_FreeSurface( temp );
+  spr_logo = SDL_LoadBMP( "logo.bmp" );
+  if( !spr_logo ) printf( "RoboCortex [error]: Unable to load logo.bmp\n" );
+  spr_logo = SDL_DisplayFormat( spr_logo );
+  spr_box = SDL_LoadBMP( "box.bmp" );
+  if( !spr_box ) printf( "RoboCortex [error]: Unable to load box.bmp\n" );
+  /* // Use bitmap "reserved" as alpha:
+  spr_box->format->Amask = 0xFF000000;
+  spr_box->format->Ashift = 24;
+  spr_box->flags |= SDL_SRCALPHA;
+  */
+  // Use magenta color keying:
+  spr_box = SDL_DisplayFormat( spr_box );
   SDL_SetColorKey( spr_box, SDL_SRCCOLORKEY, SDL_MapRGB( screen->format, 0xFF, 0x00, 0xFF ) );
 }
 
@@ -457,7 +456,7 @@ static void cursor_poll( long *ix, long *iy ) {
      || cx < ( ( screen_w >> 1 ) - ( screen_w >> 2 ) ) ) {
       cx = screen_w >> 1;
       warp = 1;
-    } 
+    }
     if( cy > ( ( screen_h >> 1 ) + ( screen_h >> 2 ) )
      || cy < ( ( screen_h >> 1 ) - ( screen_h >> 2 ) ) ) {
       cy = screen_h >> 1;
@@ -470,7 +469,7 @@ static void cursor_poll( long *ix, long *iy ) {
 }
 
 // Draws out the help screen
-void help_draw() {
+static void help_draw() {
   unsigned char n;
   unsigned char y = ( 30 - help_count ) >> 1;
   for( n = 0; n < help_count; n++ ) {
@@ -479,12 +478,47 @@ void help_draw() {
 }
 
 // Clears the help screen
-void help_clear() {
+static void help_clear() {
   unsigned char n;
   unsigned char y = ( 30 - help_count ) >> 1;
   for( n = 0; n < help_count; n++ ) {
     term_white( 4, y + n, 32 );
   }
+}
+
+// Switches keyboard layout
+static void set_layout( unsigned char new_layout ) {
+  // Mapping schemes for QWERTY (WASD) Dvorak (,AOE) and AZERTY (ZQSD)
+  layout = new_layout % KL_SIZE;
+  switch( layout ) {
+    case KL_QWERTY:
+      keymap[ KM_UP ]    = SDLK_w;
+      keymap[ KM_LEFT ]  = SDLK_a;
+      keymap[ KM_DOWN ]  = SDLK_s;
+      keymap[ KM_RIGHT ] = SDLK_d;
+      message( "SWITCHED TO QWERTY" );
+      break;
+    case KL_DVORAK:
+      keymap[ KM_UP ]    = SDLK_COMMA;
+      keymap[ KM_LEFT ]  = SDLK_a;
+      keymap[ KM_DOWN ]  = SDLK_o;
+      keymap[ KM_RIGHT ] = SDLK_e;
+      message( "SWITCHED TO DVORAK" );
+      break;
+    case KL_AZERTY:
+      keymap[ KM_UP ]    = SDLK_z;
+      keymap[ KM_LEFT ]  = SDLK_q;
+      keymap[ KM_DOWN ]  = SDLK_s;
+      keymap[ KM_RIGHT ] = SDLK_d;
+      message( "SWITCHED TO AZERTY" );
+      break;
+  }
+  help[ 0 ][ 10 ] = toupper( keymap[ KM_UP ] );
+  help[ 0 ][ 11 ] = toupper( keymap[ KM_LEFT ] );
+  help[ 0 ][ 12 ] = toupper( keymap[ KM_DOWN ] );
+  help[ 0 ][ 13 ] = toupper( keymap[ KM_RIGHT ] );
+  if( help_shown ) help_draw();
+  ctrl.ctrl.kb = 0;
 }
 
 // Thread handles reception of UDP packets
@@ -572,29 +606,17 @@ static int receiver( void *unused ) {
   }
 }
 
-// Draws a popup-box
-static inline SDL_Rect *rect( SDL_Rect *r, int x, int y, int w, int h ) {
-  r->x = x; r->y = y; r->w = w; r->h = h;
-  return( r );
-}
-void draw_box( unsigned char x, unsigned char y, unsigned char w, unsigned char h ) {
-  SDL_Rect src, dst;
-  unsigned char xx, yy;
-  SDL_BlitSurface( spr_box, rect( &src, 0, 0, 32, 32 ), screen, rect( &dst, x << 4, y << 4, 32, 32 ) );
-  SDL_BlitSurface( spr_box, rect( &src, 48, 0, 32, 32 ), screen, rect( &dst, ( x + w - 2 ) << 4, y << 4, 32, 32 ) );
-  SDL_BlitSurface( spr_box, rect( &src, 0, 48, 32, 32 ), screen, rect( &dst, x << 4, ( y + h - 2 ) << 4, 32, 32 ) );
-  SDL_BlitSurface( spr_box, rect( &src, 48, 48, 32, 32 ), screen, rect( &dst, ( x + w - 2 ) << 4, ( y + h - 2 ) << 4, 32, 32 ) );
-  for( xx = x + 2; xx < x + w - 2; xx++ ) {
-    SDL_BlitSurface( spr_box, rect( &src, 32, 0, 16, 32 ), screen, rect( &dst, xx << 4, y << 4, 16, 16 ) );
-    SDL_BlitSurface( spr_box, rect( &src, 32, 48, 16, 32 ), screen, rect( &dst, xx << 4, ( y + h - 2 ) << 4, 16, 16 ) );
+static int config_set( char *value, char *token ) {
+  if( token != NULL ) {
+    if( strcmp( token, "server" ) == 0 ) {
+      server = net_dtoa( value );
+    } else if( strcmp( token, "port" ) == 0 ) {
+      port = atoi( value );
+    } else if( strcmp( token, "plugin" ) == 0 ) {
+      return( 1 );
+    } else printf( "Config [warning]: unknown entry %s\n", token );
   }
-  for( yy = y + 2; yy < y + h - 2; yy++ ) {
-    SDL_BlitSurface( spr_box, rect( &src, 0, 32, 32, 16 ), screen, rect( &dst, x << 4, yy << 4, 16, 16 ) );
-    SDL_BlitSurface( spr_box, rect( &src, 48, 32, 32, 16 ), screen, rect( &dst, ( x + w - 2 ) << 4, yy << 4, 16, 16 ) );
-    for( xx = x + 2; xx < x + w - 2; xx++ ) {
-      SDL_BlitSurface( spr_box, rect( &src, 32, 32, 16, 16 ), screen, rect( &dst, xx << 4, yy << 4 , 16, 16 ) );
-    }
-  }
+  return( 0 );
 }
 
 int main( int argc, char *argv[] ) {
@@ -618,20 +640,18 @@ int main( int argc, char *argv[] ) {
   Uint32             rmask, gmask, bmask, amask; // Masking (endianness)
   SDL_Event          event;                      // Events
   int                quit = 0;                   // Time to quit?
-  int                b_help = 0;                 // Help is displayed?
   Uint32             time_target;                // Timing target
   Sint32             time_diff;                  // Timing differential
+  FILE              *cf;                         // Configuration file
 
   printf( "RoboCortex [info]: OHAI!\n" );
 
   set_layout( KL_QWERTY );
 
-  if( argc < 2 ) {
-    printf( "RoboCortex [error]: Need to specify IP-address on command-line\n" );
-    printf( "\n" );
-    return( 1 );
-  }
-
+  // Read configuration file
+  config_rc = ( argc > 1 ? argv[ 1 ] : config_default );
+  config_parse( config_set );
+  
   if( net_init() < 0 ) {
     printf( "RoboCortex [error]: Network initialization failed\n" );
     return( 1 );
@@ -642,10 +662,12 @@ int main( int argc, char *argv[] ) {
     return( 1 );
   };
   
-  // Port from args
-  if( argc > 2 ) port = atoi( argv[ 2 ] );
-  
-  net_addr_init( &srv_addr, net_dtoa( argv[ 1 ] ), port );
+  if( server ) {
+    net_addr_init( &srv_addr, server, port );
+  } else {
+    printf( "RoboCortex [error]: No server specified/wrong format\n" );
+    return( 1 );
+  }
 
   // Initialize decoder
   avcodec_init();
@@ -727,7 +749,7 @@ int main( int argc, char *argv[] ) {
       term_crem();
       laststate = state;
       term_clear();
-      if( b_help ) help_draw();
+      if( help_shown ) help_draw();
       // Initialize view
       if( state != STATE_STREAMING ) {
         switch( state ) {
@@ -818,14 +840,18 @@ int main( int argc, char *argv[] ) {
           live = SDL_DisplayFormat( frame );
     
           // Update control timer
-          temp = disp_data.timer / 25;
-          text_timeout[ 15 ] = '0' + ( ( temp % 60 ) % 10 );
-          text_timeout[ 14 ] = '0' + ( ( temp % 60 ) / 10 );
-          temp /= 60;
-          text_timeout[ 12 ] = '0' + ( ( temp % 60 ) % 10 );
-          text_timeout[ 11 ] = '0' + ( ( temp % 60 ) / 10 );
           term_write( 1, 1, text_controls, FONT_GREEN );
-          term_write( 1, 2, text_timeout, FONT_GREEN );
+          if( disp_data.timer == 0 ) {
+            term_white( 1, 2, strlen( text_timeout ) );
+          } else {
+            temp = disp_data.timer / 25;
+            text_timeout[ 15 ] = '0' + ( ( temp % 60 ) % 10 );
+            text_timeout[ 14 ] = '0' + ( ( temp % 60 ) / 10 );
+            temp /= 60;
+            text_timeout[ 12 ] = '0' + ( ( temp % 60 ) % 10 );
+            text_timeout[ 11 ] = '0' + ( ( temp % 60 ) / 10 );
+            term_write( 1, 2, text_timeout, FONT_GREEN );
+          }
         }
 
         // Pop decoding buffer from queue
@@ -834,7 +860,7 @@ int main( int argc, char *argv[] ) {
         free( p_buf );
         
       }
-      
+
       if( live ) {
         // Draw video
         SDL_BlitSurface( live, NULL, screen, NULL );
@@ -846,7 +872,7 @@ int main( int argc, char *argv[] ) {
         rect.h = 480;
         SDL_FillRect( screen, &rect, 0 );
       }
-      
+
       if( speech_vis( &p_vis ) == 0 ) {
         for( temp = 0; temp < 636; temp += 4 ) {
           SetColor( 0x3F, 0x00, 0x3F );
@@ -927,13 +953,13 @@ int main( int argc, char *argv[] ) {
       if( plug->draw ) plug->draw( screen );
 
     // Draw help overlay
-    if( b_help ) draw_box( 3, ( 28 - help_count ) >> 1, 34, help_count + 2 );
+    if( help_shown ) draw_box( 3, ( 28 - help_count ) >> 1, 34, help_count + 2, screen );
 
     // Clear messages
     if( message_timeout ) {
       if( --message_timeout == 0 ) term_white( 1, 27, 38 );
     }
-    
+
     // Draw terminal overlay
     term_draw();
 
@@ -943,27 +969,26 @@ int main( int argc, char *argv[] ) {
     while( SDL_PollEvent( &event ) && !quit ) {
       switch( event.type ) {
         case SDL_QUIT:
-          // Set time to quit
-          quit = 1;
+          quit = 1; // Set time to quit
           break;
-          
+
         case SDL_ACTIVEEVENT:
           if( event.active.state & SDL_APPINPUTFOCUS ) {
             if( event.active.gain == 1 ) {
-              cursor_grab( b_fullscreen );
+              cursor_grab( b_fullscreen ); // Window gained focus
             } else {
-              cursor_grab( 0 );
+              cursor_grab( 0 ); // Window lost focus
             }
           }
           break;
 
         case SDL_MOUSEMOTION:
           if( state == STATE_STREAMING && cursor_hook != NULL ) {
-            plug = cursor_hook;
+            plug = cursor_hook; // Notify plugin
             if( plug->cursor ) plug->cursor( E_MOVE, event.motion.x, event.motion.y );
           }
           break;
-          
+
         case SDL_MOUSEBUTTONDOWN:
           if( cursor_hook == NULL ) {
             // Toggle cursor grabbing
@@ -971,25 +996,25 @@ int main( int argc, char *argv[] ) {
               cursor_grab( !b_cursor_grabbed );
             }
           } else if( state == STATE_STREAMING ) {
-            plug = cursor_hook;
+            plug = cursor_hook; // Notify plugin
             if( plug->cursor ) plug->cursor( E_BUTTONDOWN, event.motion.x, event.motion.y );
           }
           break;
 
         case SDL_MOUSEBUTTONUP:
           if( state == STATE_STREAMING && cursor_hook != NULL ) {
-            plug = cursor_hook;
+            plug = cursor_hook; // Notify plugin
             if( plug->cursor ) plug->cursor( E_BUTTONUP, event.motion.x, event.motion.y );
           }
           break;
-          
+
         case SDL_KEYDOWN:
           if( keyboard_hook == NULL ) {
             switch( event.key.keysym.sym ) {
               case SDLK_ESCAPE: // Quit
                 quit = 1;
                 break;
-                
+
               case SDLK_f: // Toggle fullscreen
                 b_fullscreen = !b_fullscreen;
                 screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( b_fullscreen ? SDL_FULLSCREEN : 0 ) );
@@ -997,25 +1022,14 @@ int main( int argc, char *argv[] ) {
                 cursor_grab( b_fullscreen );
                 laststate = -1;
                 break;
-                
+
               case SDLK_l: // Switch keyboard layout
                 set_layout( layout + 1 );
                 break;
 
-/*                
-              case SDLK_t: // Text input
-                if( state == STATE_STREAMING ) {
-                  l_text = 0;
-                  p_text[ 0 ] = 0x00;
-                  term_write( 1, 28, ">", FONT_GREEN );
-                  term_cins( 2, 28 );
-                  ctrl.ctrl.kb = 0;
-                }
-                break;
-*/              
               case SDLK_h: // Toggle help
-                b_help = !b_help;
-                if( b_help ) {
+                help_shown = !help_shown;
+                if( help_shown ) {
                   help_draw();
                 } else {
                   help_clear();
@@ -1031,7 +1045,7 @@ int main( int argc, char *argv[] ) {
                 } else if( event.key.keysym.sym == keymap[ KM_DOWN ] ) {
                   ctrl.ctrl.kb |= KB_DOWN;
                 } else if( state == STATE_STREAMING && keyboard_binds[ event.key.keysym.sym ] != NULL ) {
-                  plug = keyboard_binds[ event.key.keysym.sym ];
+                  plug = keyboard_binds[ event.key.keysym.sym ]; // Notify plugin
                   if( plug->keyboard ) plug->keyboard( E_KEYDOWN, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
                 }
                 break;
@@ -1054,11 +1068,11 @@ int main( int argc, char *argv[] ) {
             } else if( event.key.keysym.sym == keymap[ KM_DOWN ] ) {
               ctrl.ctrl.kb &= ~KB_DOWN;
             } else if( keyboard_binds[ event.key.keysym.sym ] != NULL ) {
-              plug = keyboard_binds[ event.key.keysym.sym ];
+              plug = keyboard_binds[ event.key.keysym.sym ]; // Notify plugin
               if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
             }
           } else if( keyboard_hook ) {
-            plug = keyboard_hook;            
+            plug = keyboard_hook; // Notify plugin
             if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
           }
           break;
@@ -1078,7 +1092,6 @@ int main( int argc, char *argv[] ) {
     }
     time_target += 1000 / CLIENT_RPS;
     SDL_Delay( ( 1000 / CLIENT_RPS ) - time_diff );
-    
 
   }
 
@@ -1094,4 +1107,5 @@ int main( int argc, char *argv[] ) {
 
   printf( "RoboCortex [info]: KTHXBYE!\n" );
 
+  exit( 0 );
 }

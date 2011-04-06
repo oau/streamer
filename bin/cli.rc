@@ -1,0 +1,7 @@
+## Configuration file for RoboCortex client
+## Parameters are not checked, so make sure you've got them right or the client may crash
+## param value #description (default)
+
+## Communications
+server        127.0.0.1  #server IPv4 address, dotted-ip only
+#port               6979  #udp port (6979)

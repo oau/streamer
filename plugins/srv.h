@@ -6,7 +6,7 @@ typedef struct {
   // Requests a parameter from the configuration file
   int      ( *cfg_read     )( char *value, char *token );
   // Start a new thread
-  void    *( *thread_start )( void( *fp_thread )() );
+  void    *( *thread_start )( int( *fp_thread )() );
   // Forcibly kill the specified thread
   void     ( *thread_stop  )( void *h_thread );
   // Block (delay) thread for the specified number of milliseconds
