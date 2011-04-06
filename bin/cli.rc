@@ -2,6 +2,12 @@
 ## Parameters are not checked, so make sure you've got them right or the client may crash
 ## param value #description (default)
 
+## Screen resolution
+width               800  #width (640)
+height              600  #height (480)
+bpp                  32  #color depth (32)
+fullscreen            0  #start in fullscreen (0)
+
 ## Communications
 server        127.0.0.1  #server IPv4 address, dotted-ip only
 #port               6979  #udp port (6979)

@@ -10,7 +10,7 @@
 #include "sdl_console.h"
 
 // Plugins
-#define MAX_PLUGINS          10
+#define MAX_PLUGINS          16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
 
 // Protocol
@@ -18,12 +18,17 @@ extern pluginclient_t *kiwiray_open( pluginhost_t* );
 #define DEFAULT_PORT       6979 // Default port
 
 // Configuration
-#define FULLSCREEN            0 // Start in fullscreen
 #define CLIENT_RPS           50 // Client refreshes per second
 
 // Timeouts (in refreshes, see CLIENT_RPS)
 #define TIMEOUT_TRUST        16 // Before retransmitting trusted packets
 #define TIMEOUT_STREAM      125 // Before considering connection lost
+
+// Screen defaults
+#define SCREEN_WIDTH        640 // Width
+#define SCREEN_HEIGHT       480 // Height
+#define SCREEN_BPP           32 // Color depth
+#define SCREEN_FS             0 // Start in fullscreen
 
 // Client state
 enum state_e {
@@ -78,13 +83,16 @@ static char pkt_quit[ 4 ] = "QUIT";
 
 // Locals
 static    disp_data_t  disp_data;                       // Data from latest DISP packet
-static    SDL_Surface *spr_logo;                            // Image resources
+static    SDL_Surface *spr_logo;                        // Sprites
 static    SDL_Surface *spr_box; 
 static       NET_ADDR  srv_addr;                        // Server address
 static       uint32_t  server;                          // Server ip
 static       uint16_t  port = DEFAULT_PORT;             // Server port
 static    SDL_Surface *screen;                          // Screen surface
-static            int  screen_w, screen_h, screen_bpp;  // Screen parameters
+static            int  screen_w = SCREEN_WIDTH;         // Resolution
+static            int  screen_h = SCREEN_HEIGHT;
+static            int  screen_bpp = SCREEN_BPP;         
+static            int  fullscreen = SCREEN_FS;          // Fullscreen mode active
 static       NET_SOCK  h_sock;                          // Socket handle
 static   linked_buf_t *p_buffer_last;                   // Decoding buffer
 static   linked_buf_t *p_buffer_first;
@@ -103,7 +111,7 @@ static  unsigned char  layout = KL_QWERTY;
 static         SDLKey  keymap[ KM_SIZE ];               // Keyboard remapping
 static   unsigned int  message_timeout = 0;
 static    ctrl_data_t  ctrl;                            // Part of CTRL packet
-static            int  help_shown;                      // Help is displayed?
+static            int  help_shown;                      // Help is displayed
 
 // Help texts
 static           char  help[ 16 ][ 33 ] = {
@@ -132,7 +140,7 @@ static char config_default[] = "cli.rc"; // Default configuration file
 
 // Display message
 static void message( char* text ) {
-  term_write( 1, 27, text, FONT_RED );
+  term_write( 1, term_h - 3, text, FONT_RED );
   message_timeout = 125;
 }
 
@@ -192,7 +200,7 @@ static void SetColor( Uint8 red, Uint8 green, Uint8 blue ) {
 static void DrawPixel( short x, short y, Uint8 a ) {
   Uint8 cr, cg, cb;
   Uint32 cv;
-  if( y > 479 || x < 0 || x > 639 ) return;
+  if( y >= screen_h || x < 0 || x >= screen_w ) return;
 
   cv = ( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) );
   
@@ -378,6 +386,8 @@ static void load_plugins() {
   host.speak_text       = speech_queue;
   host.draw_wuline      = plug_wu;
   host.draw_box         = draw_box;
+  host.text_cols        = term_w;
+  host.text_rows        = term_h;
 
   printf( "RoboCortex [info]: Loading plugins...\n" );
   // Load kiwiray plugin
@@ -471,18 +481,18 @@ static void cursor_poll( long *ix, long *iy ) {
 // Draws out the help screen
 static void help_draw() {
   unsigned char n;
-  unsigned char y = ( 30 - help_count ) >> 1;
+  unsigned char y = ( term_h - help_count ) >> 1;
   for( n = 0; n < help_count; n++ ) {
-    term_write( 4, y + n, help[ n ], FONT_GREEN );
+    term_write( ( term_w - 32 ) >> 1, y + n, help[ n ], FONT_GREEN );
   }
 }
 
 // Clears the help screen
 static void help_clear() {
   unsigned char n;
-  unsigned char y = ( 30 - help_count ) >> 1;
+  unsigned char y = ( term_h - help_count ) >> 1;
   for( n = 0; n < help_count; n++ ) {
-    term_white( 4, y + n, 32 );
+    term_white( ( term_w - 32 ) >> 1, y + n, 32 );
   }
 }
 
@@ -612,6 +622,14 @@ static int config_set( char *value, char *token ) {
       server = net_dtoa( value );
     } else if( strcmp( token, "port" ) == 0 ) {
       port = atoi( value );
+    } else if( strcmp( token, "width" ) == 0 ) {
+      screen_w = atoi( value );
+    } else if( strcmp( token, "height" ) == 0 ) {
+      screen_h = atoi( value );
+    } else if( strcmp( token, "bpp" ) == 0 ) {
+      screen_bpp = atoi( value );
+    } else if( strcmp( token, "fullscreen" ) == 0 ) {
+      fullscreen = atoi( value );
     } else if( strcmp( token, "plugin" ) == 0 ) {
       return( 1 );
     } else printf( "Config [warning]: unknown entry %s\n", token );
@@ -636,7 +654,6 @@ int main( int argc, char *argv[] ) {
   SDL_Rect           r;                          // Used for various graphics operations
   SDL_Surface       *live = NULL;                // Live decoded video surface
   char              *p_vis;                      // Pointer to speech visualization data
-  int                b_fullscreen;               // Are we in fullscreen mode?
   Uint32             rmask, gmask, bmask, amask; // Masking (endianness)
   SDL_Event          event;                      // Events
   int                quit = 0;                   // Time to quit?
@@ -646,27 +663,39 @@ int main( int argc, char *argv[] ) {
 
   printf( "RoboCortex [info]: OHAI!\n" );
 
-  set_layout( KL_QWERTY );
-
   // Read configuration file
   config_rc = ( argc > 1 ? argv[ 1 ] : config_default );
   config_parse( config_set );
   
+  // Validate Configuration
+  if( screen_w & ~3 != screen_w || screen_h & ~3 != screen_h ) {
+    printf( "Config [error]: Width and height must be a multiple of 16\n" );
+    exit( 1 );
+  }
+  if( screen_w > 4096 || screen_h > 4096 ) {
+    printf( "Config [error]: Width or height must not exceed 4096\n" );
+    exit( 1 );
+  }
+  if( screen_w < 640 || screen_h < 480 ) {
+    printf( "Config [error]: Minimum resolution is 640x480\n" );
+    exit( 1 );
+  }
+
   if( net_init() < 0 ) {
     printf( "RoboCortex [error]: Network initialization failed\n" );
-    return( 1 );
+    exit( 1 );
   }
 
   if( net_sock( &h_sock ) < 0 ) {
     printf( "RoboCortex [error]: Socket aquire failed\n" );
-    return( 1 );
+    exit( 1 );
   };
   
   if( server ) {
     net_addr_init( &srv_addr, server, port );
   } else {
-    printf( "RoboCortex [error]: No server specified/wrong format\n" );
-    return( 1 );
+    printf( "Config [error]: No server specified/wrong format\n" );
+    exit( 1 );
   }
 
   // Initialize decoder
@@ -677,7 +706,7 @@ int main( int argc, char *argv[] ) {
   av_init_packet( &avpkt );
   if( !pCodec ) {
     printf( "RoboCortex [error]: Unable to initialize decoder\n" );
-    return( 5 );
+    exit( 5 );
   }
   avcodec_open( pCodecCtx, pCodec );  
 
@@ -687,19 +716,17 @@ int main( int argc, char *argv[] ) {
   SDL_Init( SDL_INIT_VIDEO | SDL_INIT_AUDIO );
   SDL_WM_SetCaption( "KiwiRay Client", "KiwiRay Client" );
   
-  b_fullscreen = FULLSCREEN;
-  screen_w = 640;
-  screen_h = 480;
-  screen_bpp = 32;
-  screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( b_fullscreen ? SDL_FULLSCREEN : 0 ) );
+  screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( fullscreen ? SDL_FULLSCREEN : 0 ) );
   // TODO: need check if fullscreen was possible?
-  cursor_grab( b_fullscreen );
+  cursor_grab( fullscreen );
 
   SDL_EnableUNICODE( SDL_ENABLE );
   SDL_EnableKeyRepeat( 400, 50 );
 
   resource_init();
   term_init( screen );
+
+  set_layout( KL_QWERTY );
 
 #if SDL_BYTEORDER == SDL_BIG_ENDIAN
     rmask = 0xff000000;
@@ -717,7 +744,7 @@ int main( int argc, char *argv[] ) {
 
   if( !frame ) {
     printf( "RoboCortex [error]: Unable to allcate SDL surface\n" );
-    return( 1 );
+    exit( 1 );
   }
   
   p_buffer_last = malloc( sizeof( linked_buf_t ) );;
@@ -734,7 +761,8 @@ int main( int argc, char *argv[] ) {
   // Load plugins
   load_plugins();
   atexit( unload_plugins );
-  
+
+  time_target = SDL_GetTicks();
   while( !quit ) {
 
     speech_poll();
@@ -754,30 +782,30 @@ int main( int argc, char *argv[] ) {
       if( state != STATE_STREAMING ) {
         switch( state ) {
           case STATE_CONNECTING:
-            term_write( 9, 24, text_contact, FONT_GREEN );
-            term_write( 9, 25, text_blank, FONT_GREEN );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 9, text_contact, FONT_GREEN );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 10, text_blank, FONT_GREEN );
             break;
           case STATE_QUEUED:
-            term_write( 9, 24, text_queued, FONT_GREEN );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 9, text_queued, FONT_GREEN );
             break;
           case STATE_ERROR:
-            term_write( 9, 24, text_error, FONT_RED );
-            term_write( 9, 25, text_blank, FONT_GREEN );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 9, text_error, FONT_RED );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 10, text_blank, FONT_GREEN );
             break;
           case STATE_FULL:
-            term_write( 9, 24, text_full, FONT_RED );
-            term_write( 9, 25, text_blank, FONT_GREEN );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 9, text_full, FONT_RED );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 10, text_blank, FONT_GREEN );
             break;
           case STATE_LOST:
-            term_write( 9, 24, text_lost, FONT_RED );
-            term_write( 9, 25, text_blank, FONT_GREEN );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 9, text_lost, FONT_RED );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 10, text_blank, FONT_GREEN );
             break;
           case STATE_VERSION:
-            term_write( 9, 24, text_version, FONT_RED );
-            term_write( 9, 25, text_blank, FONT_GREEN );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 9, text_version, FONT_RED );
+            term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 10, text_blank, FONT_GREEN );
             break;
         }
-        term_write( 9, 26, text_quit, FONT_GREEN );
+        term_write( ( term_w - 22 ) >> 1, ( term_h >> 1 ) + 11, text_quit, FONT_GREEN );
       }
     }
 
@@ -869,29 +897,30 @@ int main( int argc, char *argv[] ) {
         SDL_FillRect( screen, rect( &r, 0, 0, screen->w, screen->h ), 0 );
       }
 
+      // TODO: add resolution (width) support
       if( speech_vis( &p_vis ) == 0 ) {
         for( temp = 0; temp < 636; temp += 4 ) {
-          SetColor( 0x3F, 0x00, 0x3F );
-          DrawWuLine( temp + 1, 441 + p_vis[ temp ], temp + 5, 441 + ( p_vis[ temp + 4 ] ) );
-          DrawWuLine( temp - 1, 439 + p_vis[ temp ], temp + 3, 439 + ( p_vis[ temp + 4 ] ) );
-          DrawWuLine( temp + 1, 439 + p_vis[ temp ], temp + 5, 439 + ( p_vis[ temp + 4 ] ) );
-          DrawWuLine( temp - 1, 441 + p_vis[ temp ], temp + 3, 441 + ( p_vis[ temp + 4 ] ) );
+        SetColor( 0x00, 0x3F, 0x00 );
+          DrawWuLine( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 5, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 3, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 5, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 3, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
           SetColor( 0x00, 0x00, 0x00 );
-          DrawWuLine( temp + 2, 442 + p_vis[ temp ], temp + 6, 442 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 6, screen_h - 38 + ( p_vis[ temp + 4 ] ) );
         }
-        SetColor( 0x3F, 0x00, 0x3F );
-        DrawWuLine( temp + 1, 441 + p_vis[ temp ], temp + 4, 441 + ( p_vis[ temp + 3 ] ) );
-        DrawWuLine( temp - 1, 439 + p_vis[ temp ], temp + 2, 439 + ( p_vis[ temp + 3 ] ) );
-        DrawWuLine( temp + 1, 439 + p_vis[ temp ], temp + 4, 439 + ( p_vis[ temp + 3 ] ) );
-        DrawWuLine( temp - 1, 441 + p_vis[ temp ], temp + 2, 441 + ( p_vis[ temp + 3 ] ) );
+        SetColor( 0x00, 0x3F, 0x00 );
+        DrawWuLine( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 4, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
+        DrawWuLine( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 2, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
+        DrawWuLine( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 4, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
+        DrawWuLine( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 2, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
         SetColor( 0x00, 0x00, 0x00 );
-        DrawWuLine( temp + 2, 442 + p_vis[ temp ], temp + 5, 442 + ( p_vis[ temp + 3 ] ) );
-        
+        DrawWuLine( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 5, screen_h - 38 + ( p_vis[ temp + 3 ] ) );
         SetColor( 0x3F, 0xFF, 0x3F );
         for( temp = 0; temp < 636; temp += 4 ) {
-          DrawWuLine( temp, 440 + p_vis[ temp ], temp + 4, 440 + ( p_vis[ temp + 4 ] ) );
+          DrawWuLine( temp, screen_h - 40 + p_vis[ temp ], temp + 4, screen_h - 40 + ( p_vis[ temp + 4 ] ) );
         }
-        DrawWuLine( temp, 440 + p_vis[ temp ], temp + 3, 440 + ( p_vis[ temp + 3 ] ) );
+        DrawWuLine( temp, screen_h - 40 + p_vis[ temp ], temp + 3, screen_h - 40 + ( p_vis[ temp + 3 ] ) );
+        
       }
 
     } else {      
@@ -899,7 +928,7 @@ int main( int argc, char *argv[] ) {
       // Clear screen
       SDL_FillRect( screen, rect( &r, 0, 0, screen->w, screen->h ), 0 );
       // Draw logo
-      SDL_BlitSurface( spr_logo, NULL, screen, rect( &r, 170, 60, 0, 0 ) );
+      SDL_BlitSurface( spr_logo, NULL, screen, rect( &r, ( screen_w - spr_logo->w ) >> 1, ( screen_h >> 1 ) - spr_logo->h + 80, 0, 0 ) );
 
       switch( state ) {
         case STATE_CONNECTING:
@@ -924,7 +953,7 @@ int main( int argc, char *argv[] ) {
           temp /= 60;
           text_time[  8 ] = '0' + ( temp % 10 );
           text_time[  7 ] = '0' + ( temp / 10 );
-          term_write( 9, 25, text_time, FONT_GREEN );
+          term_write( 9, ( term_h >> 1 ) + 10, text_time, FONT_GREEN );
           if( statec == 0 ) {
             if( ++retry == MAX_RETRY ) {
               state = STATE_ERROR;
@@ -943,7 +972,7 @@ int main( int argc, char *argv[] ) {
       if( plug->draw ) plug->draw( screen );
 
     // Draw help overlay
-    if( help_shown ) draw_box( 3, ( 28 - help_count ) >> 1, 34, help_count + 2, screen );
+    if( help_shown ) draw_box( ( term_w - 34 ) >> 1, ( term_h - 2 - help_count ) >> 1, 34, help_count + 2, screen );
 
     // Clear messages
     if( message_timeout ) {
@@ -965,7 +994,7 @@ int main( int argc, char *argv[] ) {
         case SDL_ACTIVEEVENT:
           if( event.active.state & SDL_APPINPUTFOCUS ) {
             if( event.active.gain == 1 ) {
-              cursor_grab( b_fullscreen ); // Window gained focus
+              cursor_grab( fullscreen ); // Window gained focus
             } else {
               cursor_grab( 0 ); // Window lost focus
             }
@@ -982,7 +1011,7 @@ int main( int argc, char *argv[] ) {
         case SDL_MOUSEBUTTONDOWN:
           if( cursor_hook == NULL ) {
             // Toggle cursor grabbing
-            if( event.button.button == SDL_BUTTON_LEFT && !b_fullscreen ) {
+            if( event.button.button == SDL_BUTTON_LEFT && !fullscreen ) {
               cursor_grab( !b_cursor_grabbed );
             }
           } else if( state == STATE_STREAMING ) {
@@ -1006,10 +1035,10 @@ int main( int argc, char *argv[] ) {
                 break;
 
               case SDLK_f: // Toggle fullscreen
-                b_fullscreen = !b_fullscreen;
-                screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( b_fullscreen ? SDL_FULLSCREEN : 0 ) );
+                fullscreen = !fullscreen;
+                screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( fullscreen ? SDL_FULLSCREEN : 0 ) );
                 // TODO: need check if fullscreen was possible?
-                cursor_grab( b_fullscreen );
+                cursor_grab( fullscreen );
                 laststate = -1;
                 break;
 

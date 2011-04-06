@@ -12,7 +12,7 @@
 #include "sdl_console.h"
 
 // Plugins
-#define MAX_PLUGINS          10
+#define MAX_PLUGINS          16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
 
 // Save the stream
@@ -23,7 +23,7 @@ extern pluginclient_t *kiwiray_open( pluginhost_t* );
 #define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
 
 // Capture (device may not be capable and return another size)
-#define CAP_SOURCES          10 // Max number of capture sources
+#define CAP_SOURCES          16 // Max number of capture sources
 
 // Stream default size
 #define STREAM_WIDTH        320 // Width of streamed video
@@ -194,29 +194,14 @@ static void trust_handler( client_t *p_client, unsigned char* data, int size ) {
 static int config_set( char *value, char *token ) {
   int n;
   if( token != NULL ) {
-    if( strcmp( token, "w" ) == 0 ) {
-      if( cap_count >= 0 ) {
-        cap[ cap_count ].w = atoi( value );
-        rect( &cap[ cap_count ].src, 0, cap[ cap_count ].src.y, cap[ cap_count ].w, cap[ cap_count ].src.h );
-        rect( &cap[ cap_count ].dst, 0, cap[ cap_count ].dst.y, stream_w, cap[ cap_count ].dst.h );
-      } else stream_w = atoi( value );
-    } else if( strcmp( token, "h" ) == 0 ) {
-      if( cap_count >= 0 ) {
-        cap[ cap_count ].h = atoi( value );
-        rect( &cap[ cap_count ].src, cap[ cap_count ].src.x, 0, cap[ cap_count ].src.w, cap[ cap_count ].h );
-        rect( &cap[ cap_count ].dst, cap[ cap_count ].dst.x, 0, cap[ cap_count ].dst.w, stream_h );
-      } else stream_h = atoi( value );
+    if( strcmp( token, "width" ) == 0 ) {
+      stream_w = atoi( value );
+    } else if( strcmp( token, "height" ) == 0 ) {
+      stream_h = atoi( value );
     } else if( strcmp( token, "fps" ) == 0 ) {
       fps = atoi( value );
     } else if( strcmp( token, "port" ) == 0 ) {
       port = atoi( value );
-    } else if( strcmp( token, "device" ) == 0 ) {
-      if( cap_count >= ( CAP_SOURCES - 1 ) ) printf( "Config [warning]: too many capture sources.\n" );
-      else {
-        cap_count++;
-        cap[ cap_count ].enable = 1;
-        strcpy( cap[ cap_count ].device, value );
-      }
     } else if( strcmp( token, "timeout_connection" ) == 0 ) {
       timeout_connection = atoi( value );
     } else if( strcmp( token, "timeout_control" ) == 0 ) {
@@ -225,6 +210,27 @@ static int config_set( char *value, char *token ) {
       timeout_trust = atoi( value );
     } else if( strcmp( token, "timeout_glitch" ) == 0 ) {
       timeout_glitch = atoi( value );
+    } else if( strcmp( token, "device" ) == 0 ) {
+      if( cap_count >= ( CAP_SOURCES - 1 ) ) printf( "Config [warning]: too many capture sources.\n" );
+      else {
+        cap_count++;
+        cap[ cap_count ].enable = 1;
+        strcpy( cap[ cap_count ].device, value );
+      }
+    } else if( strcmp( token, "cap_w" ) == 0 ) {
+      if( cap_count < 0 ) printf( "Config [warning]: cap_x outside device section\n" );
+      else {
+        cap[ cap_count ].w = atoi( value );
+        rect( &cap[ cap_count ].src, 0, cap[ cap_count ].src.y, cap[ cap_count ].w, cap[ cap_count ].src.h );
+        rect( &cap[ cap_count ].dst, 0, cap[ cap_count ].dst.y, stream_w, cap[ cap_count ].dst.h );
+      }
+    } else if( strcmp( token, "cap_h" ) == 0 ) {
+      if( cap_count < 0 ) printf( "Config [warning]: cap_h outside device section\n" );
+      else {
+        cap[ cap_count ].h = atoi( value );
+        rect( &cap[ cap_count ].src, cap[ cap_count ].src.x, 0, cap[ cap_count ].src.w, cap[ cap_count ].h );
+        rect( &cap[ cap_count ].dst, cap[ cap_count ].dst.x, 0, cap[ cap_count ].dst.w, stream_h );
+      }
     } else if( strcmp( token, "src_x" ) == 0 ) {
       if( cap_count < 0 ) printf( "Config [warning]: src_x outside device section\n" );
       else cap[ cap_count ].src.x = atoi( value );

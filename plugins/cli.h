@@ -47,6 +47,8 @@ typedef struct {
   void ( *draw_box )( unsigned char x, unsigned char y, unsigned char w, unsigned char h, SDL_Surface *s );
   // Draws wu-lines
   void ( *draw_wuline )( int x0, int y0, int x1, int y1, uint32_t color );
+  // Text propteries
+  unsigned char text_cols, text_rows;
 } pluginhost_t;
 
 typedef struct {

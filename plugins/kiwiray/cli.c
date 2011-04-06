@@ -13,7 +13,7 @@ static void init() {
 
 // Called when hooks are lost
 static void lost_hooks() {
-  host->text_clear( 1, 28, 38 );
+  host->text_clear( 1, host->text_rows - 2, 38 );
   host->text_crem();
   l_text = -1;
 }
@@ -26,8 +26,8 @@ static void key_event( int event, int key, char ascii ) {
           // Remove last character
           if( l_text > 0 ) {
             p_text[ --l_text ] = 0;
-            host->text_clear( l_text + 2, 28, 1 );
-            host->text_cins( l_text + 2, 28 );
+            host->text_clear( l_text + 2, host->text_rows - 2, 1 );
+            host->text_cins( l_text + 2, host->text_rows - 2 );
             break;
           }
           //...
@@ -54,8 +54,8 @@ static void key_event( int event, int key, char ascii ) {
           if( host->text_valid( ascii ) && l_text < 37 ) {
             p_text[ l_text++ ] = ascii;
             p_text[ l_text ] = 0;
-            host->text_write( l_text + 1, 28, &p_text[ l_text - 1 ], FONT_GREEN );
-            host->text_cins( l_text + 2, 28 );
+            host->text_write( l_text + 1, host->text_rows - 2, &p_text[ l_text - 1 ], FONT_GREEN );
+            host->text_cins( l_text + 2, host->text_rows - 2 );
           }
 
       }      
@@ -63,8 +63,8 @@ static void key_event( int event, int key, char ascii ) {
       if( host->keyboard_hook() ) {
         l_text = 0;
         p_text[ 0 ] = 0x00;
-        host->text_write( 1, 28, ">", FONT_GREEN );
-        host->text_cins( 2, 28 );
+        host->text_write( 1, host->text_rows - 2, ">", FONT_GREEN );
+        host->text_cins( 2, host->text_rows - 2 );
       }
     }
   }
