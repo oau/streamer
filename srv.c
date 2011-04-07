@@ -1,5 +1,3 @@
-#include <stdlib.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <signal.h>
 #include <SDL/SDL.h>
@@ -12,7 +10,7 @@
 #include "sdl_console.h"
 
 // Plugins
-#define MAX_PLUGINS          16
+#define MAX_PLUGINS           16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
 extern pluginclient_t *ipv4udp_open( pluginhost_t* );
 
@@ -20,54 +18,23 @@ extern pluginclient_t *ipv4udp_open( pluginhost_t* );
 //#define SAVE_STREAM            "server.h264"
 
 // Protocol
-#define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
+#define MAX_CLIENTS           10 // Max number of clients allowed in the quuee
 
 // Capture (device may not be capable and return another size)
-#define CAP_SOURCES          16 // Max number of capture sources
+#define CAP_SOURCES           16 // Max number of capture sources
 
 // Stream default size
-#define STREAM_WIDTH        320 // Width of streamed video
-#define STREAM_HEIGHT       240 // Height of streamed video
+#define STREAM_WIDTH         320 // Width of streamed video
+#define STREAM_HEIGHT        240 // Height of streamed video
 
 // Default FPS
-#define FPS                  25 // FPS of streamed video (also requested capture FPS)
+#define FPS                   25 // FPS of streamed video (also requested capture FPS)
 
 // Default timeouts (in frames, see fps)
-#define TIMEOUT_CONNECTION  100 // Before connection is closed if no data has arrived
-#define TIMEOUT_CONTROL    7500 // Before control session is ended
-#define TIMEOUT_TRUST         8 // Before retransmitting trusted packets
-#define TIMEOUT_GLITCH        2 // Before robot stops moving if a connection glitches/is lost
-
-// Client data
-struct client_t {
-  remote_t         remote;
-  int              timeout;
-  int              timer;
-  int              glitch;
-  unsigned char    trust_cli;
-  unsigned char    trust_srv;
-  struct client_t *prev;
-  struct client_t *next;
-  int              index;
-  ctrl_data_t      ctrl;
-  int              got_first;
-  ctrl_t           last;
-  ctrl_t           diff;
-  unsigned char    trust_data;
-};
-typedef struct client_t client_t;
-
-// Capture setting
-typedef struct {
-  int enable;
-  char device[ CFG_VALUE_MAX_SIZE ];  
-  int dev;
-  int w, h;
-  SDL_Rect src;
-  SDL_Rect dst;
-  uint8_t *data;
-  struct SwsContext* swsCtx;
-} capture_t;
+#define TIMEOUT_CONNECTION   100 // Before connection is closed if no data has arrived
+#define TIMEOUT_CONTROL     7500 // Before control session is ended
+#define TIMEOUT_TRUST          8 // Before retransmitting trusted packets
+#define TIMEOUT_GLITCH         2 // Before robot stops moving if a connection glitches/is lost
 
 // Exit code list
 enum exitcode_e {
@@ -83,39 +50,69 @@ enum exitcode_e {
   EXIT_CONFIG
 };
 
+// Client data
+struct client_t {
+  remote_t           remote;
+  int                timeout;
+  int                timer;
+  int                glitch;
+  unsigned char      trust_cli;
+  unsigned char      trust_srv;
+  struct client_t   *prev;
+  struct client_t   *next;
+  int                index;
+  ctrl_data_t        ctrl;
+  int                got_first;
+  ctrl_t             last;
+  ctrl_t             diff;
+  unsigned char      trust_data;
+};
+typedef struct client_t client_t;
+
+// Capture setting
+typedef struct {
+  int                enable;
+  char               device[ CFG_VALUE_MAX_SIZE ];
+  int                dev;
+  int                w, h;
+  SDL_Rect           src, dst;
+  uint8_t           *data;
+  struct SwsContext *swsCtx;
+} capture_t;
+
 // Locals
-static int quit     = 0; // Time to quit (SIGINT etc.)
-static int do_intra = 0; // Time to intra-refresh (New client connected)
+static            int  quit     = 0; // Time to quit (SIGINT etc.)
+static            int  do_intra = 0; // Time to intra-refresh (New client connected)
 
 // Clients linked-list array
-static       int  max_clients = MAX_CLIENTS;
-static  client_t *clients;
-static  client_t *client_first = NULL;
-static  client_t *client_last  = NULL;
-static SDL_mutex *client_mx;
-static       int  direct;
+static            int  max_clients = MAX_CLIENTS;
+static       client_t *clients;
+static       client_t *client_first = NULL;
+static       client_t *client_last  = NULL;
+static      SDL_mutex *client_mx;
+static            int  direct;
 
 // Trusted data linked_list & mutex
-static linked_buf_t *trust_first = NULL;
-static linked_buf_t *trust_last = NULL;
-static          int  trust_timeout;
-static    SDL_mutex *trust_mx;
+static   linked_buf_t *trust_first = NULL;
+static   linked_buf_t *trust_last = NULL;
+static            int  trust_timeout;
+static      SDL_mutex *trust_mx;
 
 // Packet types
-static char pkt_data[ 4 ] = "DATA";
-static char pkt_helo[ 4 ] = "HELO";
-static char pkt_time[ 4 ] = "TIME";
-static char pkt_ctrl[ 4 ] = "CTRL";
-static char pkt_lost[ 4 ] = "LOST";
-static char pkt_full[ 4 ] = "FULL";
-static char pkt_quit[ 4 ] = "QUIT";
+static           char  pkt_data[ 4 ] = "DATA";
+static           char  pkt_helo[ 4 ] = "HELO";
+static           char  pkt_time[ 4 ] = "TIME";
+static           char  pkt_ctrl[ 4 ] = "CTRL";
+static           char  pkt_lost[ 4 ] = "LOST";
+static           char  pkt_full[ 4 ] = "FULL";
+static           char  pkt_quit[ 4 ] = "QUIT";
 
 // Configuration
-static char config_default[] = "srv.rc"; // Default configuration file
+static           char  config_default[] = "srv.rc"; // Default configuration file
 
 // Capture
-static capture_t cap[ CAP_SOURCES ];
-static       int cap_count = -1;
+static      capture_t  cap[ CAP_SOURCES ];
+static            int  cap_count = -1;
 
 // Encoding
 static            int  stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
@@ -123,19 +120,21 @@ static         x264_t *encoder;
 static x264_picture_t  pic_in, pic_out;
 
 // Receive data mutex TODO: replace with buffering system and semaphore?
-static  SDL_mutex *receive_mx;
+static      SDL_mutex *receive_mx;
 
 // Timeouts
-static int timeout_connection = TIMEOUT_CONNECTION;
-static int timeout_control = TIMEOUT_CONTROL;
-static int timeout_trust = TIMEOUT_TRUST;
-static int timeout_glitch = TIMEOUT_GLITCH;
+static            int  timeout_connection = TIMEOUT_CONNECTION;
+static            int  timeout_control = TIMEOUT_CONTROL;
+static            int  timeout_trust = TIMEOUT_TRUST;
+static            int  timeout_glitch = TIMEOUT_GLITCH;
 
 // Plugins
 static   pluginhost_t  host;
 static pluginclient_t *plug;
 static pluginclient_t *plugs[ MAX_PLUGINS ];
 static            int  plugs_count;
+
+/* == TRUSTED COMMUNICATIONS ==================================================================== */
 
 // Queues a packet for trusted (non-lossy) transmission
 static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
@@ -186,6 +185,21 @@ static void trust_handler( client_t *p_client, unsigned char* data, int size ) {
     size -= len;
   }
 }
+
+// Clear trusted queue
+static void trust_clear() {
+  linked_buf_t *p_trust;
+  SDL_mutexP( trust_mx );
+  while( trust_first ) {
+    p_trust = trust_first->next;
+    free( trust_first );
+    trust_first = p_trust;
+  }
+  SDL_mutexV( trust_mx );
+  trust_timeout = 0;
+}
+
+/* == CONFIGURATION ============================================================================= */
 
 static int config_set( char *value, char *token ) {
   int n;
@@ -268,18 +282,7 @@ static int config_set( char *value, char *token ) {
   return( 0 );
 }
 
-// Clear trusted queue
-static void trust_clear() {
-  linked_buf_t *p_trust;
-  SDL_mutexP( trust_mx );
-  while( trust_first ) {
-    p_trust = trust_first->next;
-    free( trust_first );
-    trust_first = p_trust;
-  }
-  SDL_mutexV( trust_mx );
-  trust_timeout = 0;
-}
+/* == CLIENTS MANAGEMENT ======================================================================== */
 
 // Add client, return index or -1 if queue is full
 static client_t *clients_add( remote_t *remote ) {
@@ -290,14 +293,11 @@ static client_t *clients_add( remote_t *remote ) {
   if( direct ) {
     if( clients->remote.size == remote->size ) {
       if( memcmp( clients->remote.addr, remote->addr, remote->size ) == 0 ) {
-    //if( memcmp( clients, client, sizeof( NET_ADDR ) ) != 0 ) {
         if( clients->remote.addr ) free( clients->remote.addr );
         clients->remote.addr = malloc( remote->size );
         memcpy( clients->remote.addr, remote->addr, remote->size );
         clients->remote.size = remote->size;
         clients->remote.handler = remote->handler;
-        //memcpy( &clients->remote,
-        //memcpy( clients, client, sizeof( NET_ADDR ) );
         clients->trust_cli = 0xFF;
         clients->trust_srv = 0x00;
         clients->got_first = 0;
@@ -363,8 +363,6 @@ static client_t *clients_find( remote_t *remote ) {
     if( clients[ n ].timeout ) {
       if( clients[ n ].remote.size == remote->size ) {
         if( memcmp( clients[ n ].remote.addr, remote->addr, remote->size ) == 0 ) {
-      //if( net_addr_get( &clients[ n ].client ) == net_addr_get( client ) ) {
-      //  if( net_port_get( &clients[ n ].client ) == net_port_get( client ) ) {
           p_ret = &clients[ n ];
           break;
         }
@@ -376,6 +374,7 @@ static client_t *clients_find( remote_t *remote ) {
   return( p_ret );
 }
 
+// Calculates control differentals
 static void clients_diff( client_t *p_client ) {
   p_client->diff.mx = p_client->ctrl.ctrl.mx - p_client->last.mx;
   p_client->diff.my = p_client->ctrl.ctrl.my - p_client->last.my;
@@ -383,7 +382,7 @@ static void clients_diff( client_t *p_client ) {
   memcpy( &p_client->last, &p_client->ctrl.ctrl, sizeof( ctrl_t ) );
 }
 
-// Return queue time for specific client into buf[ offset ]
+// Calculates queue time for specific client
 static char * queue_time( char buf[], int offset, client_t *p_client ) {
   client_t *cli = client_first;
   int total = 0;
@@ -431,12 +430,15 @@ static void clients_tick() {
 	      do_intra = 1; // Intra-refresh needed
       }
 	    trust_clear();
-    }    
+    }
     if( client_first ) if( client_first->timer < 0 ) client_first->timer = 0;
   }
   SDL_mutexV( client_mx );
 }
 
+/* == COMMUNICATIONS ============================================================================ */
+
+// Processes a data packet
 void comm_recv( char *buffer, int size, remote_t *remote ) {
   client_t *p_client = clients_find( remote );
   SDL_mutexP( receive_mx );
@@ -445,11 +447,9 @@ void comm_recv( char *buffer, int size, remote_t *remote ) {
       if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
         // Re-send HELO+version+time
         buffer[ 4 ] = CORTEX_VERSION;
-        //net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
         ( ( pluginclient_t* )( remote->handler ) )->comm_send( queue_time( buffer, 5, p_client ), 5 + sizeof( int ), remote );
       } else if( memcmp( buffer, pkt_time, 4 ) == 0 ) {
         // Send TIME+time
-        //net_send( &h_sock, queue_time( buffer, 4, p_client ), 4 + sizeof( int ), &cli_addr );
         ( ( pluginclient_t* )( remote->handler ) )->comm_send( queue_time( buffer, 4, p_client ), 4 + sizeof( int ), remote );
         SDL_mutexP( client_mx );
         p_client->timeout = timeout_connection;
@@ -500,22 +500,21 @@ void comm_recv( char *buffer, int size, remote_t *remote ) {
         if( p_client ) {
           // Connection accepted, send HELO+version+time
           buffer[ 4 ] = CORTEX_VERSION;
-          //net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
           ( ( pluginclient_t* )( remote->handler ) )->comm_send( queue_time( buffer, 5, p_client ), 5 + sizeof( int ), remote );
         } else {
           // Server is full, send FULL
-          //net_send( &h_sock, pkt_full, 4, &cli_addr );
           ( ( pluginclient_t* )( remote->handler ) )->comm_send( pkt_full, 4, remote );
         }
       } else {
         // Unknown connection, send LOST
-        //net_send( &h_sock, pkt_lost, 4, &cli_addr );
         ( ( pluginclient_t* )( remote->handler ) )->comm_send( pkt_lost, 4, remote );
       }
     }
   }
   SDL_mutexV( receive_mx );
 }
+
+/* == CAPTURE SCALING & CONVERSION ============================================================== */
 
 // Convert, crop, scale and blit all RGB24 capture sources onto YUV420P destination
 static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
@@ -525,13 +524,15 @@ static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
   int n;
   for( n = 0; n < cap_count; n++ ) {
     src_stride = cap[ n ].w * 3;
-    r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );  
+    r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );
     r_dst[ 0 ] = dst[ 0 ] + ( cap[ n ].dst.y * dst_stride[ 0 ] ) + cap[ n ].dst.x;
     r_dst[ 1 ] = dst[ 1 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
     r_dst[ 2 ] = dst[ 2 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
     sws_scale( cap[ n ].swsCtx, &r_src, &src_stride, 0, cap[ n ].src.h, r_dst, dst_stride );
   }
 }
+
+/* == PLUGIN SYSTEM ============================================================================= */
 
 // Plugin helpers
 static  int  plug_thread  ( void *pThread ) { return( ( ( int( * )() )pThread )() ); }
@@ -569,6 +570,8 @@ static void unload_plugins() {
   for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
     if( plug->close ) plug->close();
 }
+
+/* == APPLICATION CONTROL ======================================================================= */
 
 static void terminate( int z ) {
   printf( "\nRoboCortex [info]: SIGINT received, shutting down...\n\n" );
@@ -610,6 +613,8 @@ void clients_free() {
   free( clients );
 }
 
+/* == MAIN THREAD =============================================================================== */
+
 int main( int argc, char *argv[] ) {
   int            n, pid;
 	int            cap_w, cap_h;
@@ -648,7 +653,7 @@ int main( int argc, char *argv[] ) {
     direct = 1;
     timeout_control = 0;
   }
-  
+
   // Allocate client memory
   clients = malloc( sizeof( client_t ) * max_clients );
   memset( clients, 0, sizeof( client_t ) * max_clients );
@@ -675,7 +680,7 @@ int main( int argc, char *argv[] ) {
       exit( EXIT_CAPTURE );
     }
   }
-  
+
   // Initialize scaling and conversion contexts
   atexit( sws_free );
   for( n = 0; n < cap_count; n++ ) {
@@ -688,11 +693,11 @@ int main( int argc, char *argv[] ) {
 
   // Initialize encoder
   x264_param_default_preset( &param, "medium", "zerolatency" );
-  
+
   param.i_width   = stream_w;
   param.i_height  = stream_h;
   param.i_fps_num = fps;
-  
+
   // Settings as explained by http://x264dev.multimedia.cx/archives/249
 
   x264_param_parse( &param, "slice-max-size", "8192" ); /* Practically disables slicing.
@@ -700,22 +705,22 @@ int main( int argc, char *argv[] ) {
   																											   a series of NALs, each having a maximum size
   																											   so that they can be transported over
   																											   interfaces that has a limited packet size/MTU */
-  
+
   x264_param_parse( &param, "vbv-maxrate", "500" );     /* Set VBV mode and max bitrate (kbps).
   																												 VBV is variable bitrate, which means the rate
   																												 will vary depending on how complex the scene
   																												 is at the moment - detail, motion, etc. */
-  
+
   x264_param_parse( &param, "vbv-bufsize", "30" );		  /* Enable single-frame VBV.
   																												 This will cap all frames so that they only
   																												 contain a maximum amount of information,
   																												 which in turn means that each frame can
   																												 always be sent in one packet and packetss
   																												 will be of a much more unform size. */
-  
+
   x264_param_parse( &param, "crf", "20" );							/* Constant Rate Factor.
   																												 Tells VBV to target a specific quality. */
-  
+
   x264_param_parse( &param, "intra-refresh", NULL );		/* Enable intra-refresh.
   																												 Intra-refresh allows single-frame VBV to
   																												 work well by disabling I-frames and
@@ -730,7 +735,7 @@ int main( int argc, char *argv[] ) {
   param.b_annexb = 1;																		/* Use Annex-B packaging.
   																											   This appends a marker at the start of
   																											   each NAL unit. */
-  
+
   param.i_frame_reference = 1;													/* Needed for intra-refresh. */
 
   x264_param_apply_profile( &param, "high" );						/* Apply HIGH profile.
@@ -741,7 +746,7 @@ int main( int argc, char *argv[] ) {
   // Open encoder
   encoder = x264_encoder_open( &param );
   atexit( encoder_free );
-  
+
   // Allocate I420 picture
   if( x264_picture_alloc( &pic_in, X264_CSP_I420, stream_w, stream_h ) == 0 ) {
     atexit( picture_free );
@@ -754,14 +759,10 @@ int main( int argc, char *argv[] ) {
   host.stream_w = stream_w;
   host.stream_h = stream_h;
 
-  // Create receiving thread
-//  hReceiver = SDL_CreateThread( receiver, NULL );
-//  atexit( receiver_free );
-  
   // Load plugins
   load_plugins();
   atexit( unload_plugins );
-  
+
 #ifndef DISABLE_SPEECH
   speech_open();
   atexit( speech_free );
@@ -801,7 +802,7 @@ int main( int argc, char *argv[] ) {
     SDL_mutexP( client_mx );
     temp = ( client_first ? 1 : 0 );
     SDL_mutexV( client_mx );
-    
+
     // Clear motion if control packets are not arriving
     if( temp ) {
       if( client_first->glitch == 0 ) {
@@ -809,14 +810,14 @@ int main( int argc, char *argv[] ) {
       }
     }
 
-    // Calculate control differentials 
+    // Calculate control differentials
     if( temp ) clients_diff( client_first );
 
     // plugin->tick
     for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
       if( plug->tick ) plug->tick();
 
-    // Encode frame    
+    // Encode frame
     if( do_intra ) {
       do_intra = 0;
       x264_encoder_intra_refresh( encoder );
@@ -853,9 +854,8 @@ int main( int argc, char *argv[] ) {
     if( temp ) {
 
     	// Send H.264 frame
-      //net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
       ( ( pluginclient_t* )( client_first->remote.handler ) )->comm_send( p_buffer, i_buffer, &client_first->remote );
-      
+
       // Build DATA packet
       memcpy( p_buffer, "DATA", 4 );
       disp.timer    = client_first->timer;
@@ -883,9 +883,8 @@ int main( int argc, char *argv[] ) {
         if( plug->stream ) plug->stream( p_buffer, i_buffer );
 
       // Send DATA packet
-      //net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
       ( ( pluginclient_t* )( client_first->remote.handler ) )->comm_send( p_buffer, i_buffer, &client_first->remote );
-      
+
     } else {
       // plugin->still
       for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
@@ -894,7 +893,7 @@ int main( int argc, char *argv[] ) {
 
     // Delay 1/fps seconds, constantly correct for processing overhead
     time_diff = SDL_GetTicks() - time_target;
-    if( time_diff > 1000 / fps ) { 
+    if( time_diff > 1000 / fps ) {
       time_diff = 0;
       time_target = SDL_GetTicks(); // Reset on overflow
       printf( "RoboCortex [warning]: Encoder cannot keep up with desired FPS\n" );

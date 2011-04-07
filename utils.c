@@ -62,6 +62,7 @@ int config_find_line( char **find_value, char *find_token, FILE *f ) {
   return( 0 );
 }
 
+// Opens configuration file
 static FILE* config_open() {
   FILE *cf;
   cf = fopen( config_rc, "r" );
@@ -107,7 +108,20 @@ void config_parse( int( *callback )( char*, char* ) ) {
   }
 }
 
+// Fills an SDL_Rect struct and returns its pointer
 SDL_Rect *rect( SDL_Rect *r, int x, int y, int w, int h ) {
   r->x = x; r->y = y; r->w = w; r->h = h;
   return( r );
+}
+
+// Convert unicode to uppercase only ascii - kind of a hack
+char unicode_ascii( int uni ) {
+  #define INTERNATIONAL_MASK 0xFF80
+  #define UNICODE_MASK       0x007F
+  if( uni == 0 ) return( 0 );
+  if( ( uni & INTERNATIONAL_MASK ) == 0 ) {
+    return( ( char )( toupper( uni & UNICODE_MASK ) ) );
+  } else {
+    return( 0 );
+  }
 }

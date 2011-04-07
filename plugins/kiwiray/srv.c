@@ -1,18 +1,17 @@
-#include "srv.h"
+#include "srv.h" // This is a server plugin
 
-// Movement
-#define ROT_DZN               3 // Dead-zone TODO: verify
-#define ROT_ACC               6 // Acceleration
-#define ROT_DMP               6 // Dampening
-#define ROT_SEN             0.5 // Sensitivity
-#define ROT_MAX            1000 // Max accumulated rotation TODO: verify
+#define ROT_DZN                3        // Dead-zone
+#define ROT_ACC                6        // Acceleration
+#define ROT_DMP                6        // Dampening
+#define ROT_SEN              0.5        // Sensitivity
+#define ROT_MAX             1000        // Max accumulated rotation
 
-#define MOV_ACC               2 // Acceleration
-#define MOV_BRK               5 // Breaking
+#define MOV_ACC                2        // Acceleration
+#define MOV_BRK                5        // Breaking
 
-#define CAM_SEN             0.3 // Sensitivity
+#define CAM_SEN              0.3        // Sensitivity
 
-#define TIMEOUT_EMOTICON    100 // Before emoticon is removed
+#define TIMEOUT_EMOTICON     100        // Before emoticon is removed
 
 // Emoticon list
 enum emo_e {
@@ -22,23 +21,19 @@ enum emo_e {
   EMO_ANGRY
 };
 
-// Plugin data
-static pluginclient_t  kiwiray;
-static  pluginhost_t  *host;
+static pluginclient_t  kiwiray;         // Plugin descriptor
+static  pluginhost_t  *host;            // RoboCortex descriptor
 
-// Configuration
-static          char   serdev[ 256 ];
+static          char   serdev[ 256 ];   // Serial device name
 
-// Driving
-static          char   drive_x; // Strafe
-static          char   drive_y; // Move
-static          char   drive_r; // Turn
-static unsigned  int   drive_p; // Pitch
-static          long   integrate_r = 0;
+static          char   drive_x;         // Strafe
+static          char   drive_y;         // Move
+static          char   drive_r;         // Turn
+static unsigned  int   drive_p;         // Pitch
+static          long   integrate_r;     // Rotational(turn) integration
 
-// Locals
-static          void  *h_thread;
-static           int   connected;
+static          void  *h_thread;        // Communications thread handle
+static           int   connected;       // Successfully connected
 
 // Emoticons
 static unsigned char   emoticon;
@@ -84,7 +79,7 @@ const unsigned  char   emotidata[ 4 ][ 24 ] = {
   }
 };
 
-// This thread handles KiwiRay communications
+// Thread: manage KiwiRay serial communications
 static int commthread() {
   int b_working = 0;
   unsigned char n;
@@ -112,7 +107,6 @@ static int commthread() {
       b_working = ( serial_open( serdev ) == 0 );
       if( b_working ) b_working = serial_params( "115200,n,8,1" );
     }
-
     p_pkt[ 1 ] = 0x00;               // Drive XYZ
     p_pkt[ 2 ] = -drive_x;           // Strafe X
     p_pkt[ 3 ] = -drive_y;           // Move   Y
@@ -132,6 +126,7 @@ static int commthread() {
   return( 0 );
 }
 
+// Handles packets received from client plugin
 static void process_data( void* p_data, unsigned char size ) {
   int n;
   char data[ 256 ];
@@ -154,13 +149,12 @@ static void process_data( void* p_data, unsigned char size ) {
   host->speak_text( data );
 }
 
-// Called for each frame
-// Plugin may analyse/modify final YUV420P frame here
+// Tick: updates motion and timeouts
 static void tick() {
 	int temp;
-	
+
 	if( !connected ) return; // Important - host->ctrl/diff not valid!
-	
+
 	// Emoticon timeout
 	if( emoticon_timeout ) {
 	  if( --emoticon_timeout == 0 ) emoticon = EMO_CONNECTED;
@@ -201,7 +195,7 @@ static void tick() {
   } else {
     drive_r = 0;
   }
-  
+
   // Handle camera pitch
   if( ( long )drive_p + host->diff->my > 255 / CAM_SEN ) {
     drive_p = 255 / CAM_SEN;
@@ -212,8 +206,7 @@ static void tick() {
   }
 }
 
-// Called when the connection glitches or is lost
-// Stop any current movement or return to starting position as soon as possible
+// Connection has glitched: stops all motion
 static void stop_moving() {
   drive_x = 0;
   drive_y = 0;
@@ -222,24 +215,22 @@ static void stop_moving() {
   integrate_r = 0;
 }
 
-// Called when shutting down
-// Free any resources
+// Frees allocated resources
 static void close() {
   if( h_thread ) host->thread_stop( h_thread );
 }
 
-// Called when client connects or disconnects
+// Switches emoticon based on connection status
 static void connect_status( int status ) {
   connected = status;
   emoticon = ( connected ? EMO_CONNECTED : EMO_IDLE );
 }
 
+// Initializes serial communications
 static void init() {
   char temp[ CFG_VALUE_MAX_SIZE ];
-
   // Configuration
   if( host->cfg_read( temp, "timeout_emoticon" ) ) timeout_emoticon = atoi( temp );
-  
   // Initialise serial
   if( host->cfg_read( serdev, "commport" ) ) {
     h_thread = host->thread_start( commthread );
@@ -248,8 +239,7 @@ static void init() {
   }
 }
 
-// Called when plugin is loaded
-// Allocate required resources
+// Sets up the plugin descriptor
 pluginclient_t *kiwiray_open( pluginhost_t *p_host ) {
   memcpy( &kiwiray.ident, "KIWI", 4 );
   host = p_host;

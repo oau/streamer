@@ -1,23 +1,19 @@
-#include "cli.h"
+#include "cli.h" // This is a client plugin
 
-static pluginhost_t *host;
-static pluginclient_t kiwiray;
+static pluginclient_t  kiwiray;         // Plugin descriptor
+static pluginhost_t   *host;            // RoboCortex descriptor
 
-static char p_text[ 256 ];              // Command text input
-static char l_text = -1;                // Tracks size of p_text
+static           char  p_text[ 256 ];   // Input buffer
+static           char  l_text = -1;     // Current size of p_text
 
-static void init() {
-  host->key_bind( SDLK_t );
-  host->help_add( "T: OPEN SPEECH/COMMAND PROMPT" );
-}
-
-// Called when hooks are lost
+// Hooks were lost, reset input
 static void lost_hooks() {
   host->text_clear( 1, host->text_rows - 2, 38 );
   host->text_crem();
   l_text = -1;
 }
-
+                                    
+// Handles keyboard events
 static void key_event( int event, int key, char ascii ) {
   if( event == E_KEYDOWN ) {
     if( l_text >= 0 ) {
@@ -70,8 +66,13 @@ static void key_event( int event, int key, char ascii ) {
   }
 }
 
-// Called when plugin is loaded
-// Allocate required resources
+// Initializes hooks and help
+static void init() {
+  host->key_bind( SDLK_t );
+  host->help_add( "T: OPEN SPEECH/COMMAND PROMPT" );
+}
+
+// Sets up the plugin descriptor
 pluginclient_t *kiwiray_open( pluginhost_t *p_host ) {
   memcpy( &kiwiray.ident, "KIWI", 4 );
   host = p_host;

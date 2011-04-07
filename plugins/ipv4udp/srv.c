@@ -1,25 +1,26 @@
-#include "srv.h"
+#include "srv.h" // This is a server plugin
 
-#define PORT           6979 // Default port
+#define PORT                6979        // Default port
 
-static pluginclient_t  ipv4udp;
-static   pluginhost_t *host;
+static pluginclient_t  ipv4udp;         // Plugin descriptor
+static   pluginhost_t *host;            // RoboCortex descriptor
 
-static            int  port = PORT;
+static            int  port = PORT;     // Default port
 
-static            int  initialized;
+static            int  initialized;     // Successful initialization
 
-static       NET_SOCK  h_sock;
-static       NET_ADDR  srv_addr;
-static       NET_ADDR  cli_addr;
+static       NET_SOCK  h_sock;          // Socket
+static       NET_ADDR  srv_addr;        // Servers address and port
+static       NET_ADDR  cli_addr;        // Client address and port
 
-static           char  buffer[ 8192 ];
-static            int  size;
+static           char  buffer[ 8192 ];  // Receive buffer
+static            int  size;            // Packet size
+
+static           void *h_thread;        // Receive thrad handle
 
 static       remote_t  remote = { &cli_addr, sizeof( NET_ADDR ), &ipv4udp };
-static           void *h_thread;
 
-// This thread receives IPv4 UDP packets
+// Receives IPv4 UDP packets and passes them to RoboCortex
 int receiver() {
   if( !initialized ) return( 1 );
   while( 1 ) {
@@ -30,12 +31,13 @@ int receiver() {
   return( 0 );
 }
 
-// This function sends IPv4 UDP packets
+// Sends IPv4 UDP packets when called by RoboCortex
 void sender( char* data, int size, remote_t *remote ) {
   if( !initialized ) return;
   net_send( &h_sock, data, size, ( NET_ADDR* )remote->addr );
 }
 
+// Initializes IPv4 network and sets up UDP server socket
 static void init() {
   char temp[ CFG_VALUE_MAX_SIZE ];
 
@@ -61,15 +63,15 @@ static void init() {
     }
   }
   initialized = 1;
-  h_thread = host->thread_start( receiver );  
+  h_thread = host->thread_start( receiver );
 }
 
+// Frees allocated resources
 static void close() {
   if( h_thread ) host->thread_stop( h_thread );
 }
 
-// Called when plugin is loaded
-// Allocate required resources
+// Sets up the plugin descriptor
 pluginclient_t *ipv4udp_open( pluginhost_t *p_host ) {
   memcpy( &ipv4udp.ident, "UDP4", 4 );
   host = p_host;

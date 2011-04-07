@@ -1,26 +1,24 @@
-#include "cli.h"
+#include "cli.h" // This is a client plugin
 
-#define PORT           6979 // Default port
+#define PORT                6979        // Default port
 
-static pluginclient_t  ipv4udp;
-static   pluginhost_t *host;
+static pluginclient_t  ipv4udp;         // Plugin descriptor
+static   pluginhost_t *host;            // RoboCortex descriptor
 
-static       uint32_t  server; // Server ip
+static       uint32_t  server;          // Server ip
+static            int  port = PORT;     // Server port
 
-static            int  port = PORT;
+static            int  initialized;     // Successful initialization
 
-static            int  initialized;
+static       NET_SOCK  h_sock;          // Socket
+static       NET_ADDR  srv_addr;        // Servers address and port
 
-static       NET_SOCK  h_sock;
-static       NET_ADDR  srv_addr;
-static       NET_ADDR  cli_addr;
+static           char  buffer[ 8192 ];  // Receive buffer
+static            int  size;            // Packet size
 
-static           char  buffer[ 8192 ];
-static            int  size;
+static           void *h_thread;        // Receive thread handle
 
-static           void *h_thread;
-
-// This thread receives IPv4 UDP packets
+// Receives IPv4 UDP packets and passes them to RoboCortex
 int receiver() {
   if( !initialized ) return( 1 );
   while( 1 ) {
@@ -30,19 +28,20 @@ int receiver() {
   return( 0 );
 }
 
-// This function sends IPv4 UDP packets
+// Sends IPv4 UDP packets when called by RoboCortex
 void sender( char* data, int size ) {
   if( !initialized ) return;
   net_send( &h_sock, data, size, &srv_addr );
 }
 
+// Initializes IPv4 network and sets up UDP socket
 static void init() {
   char temp[ CFG_VALUE_MAX_SIZE ];
 
   // Configuration
   if( host->cfg_read( temp, "server" ) ) server = net_dtoa( temp );
   if( host->cfg_read( temp, "port" ) ) port = atoi( temp );
-    
+
   if( !server ) {
     printf( "IPv4 UDP [error]: No server specified/wrong format\n" );
     return;
@@ -58,20 +57,25 @@ static void init() {
       fprintf( stderr, "IPv4 UDP  [error]: Socket aquire failed\n" );
       return;
     } else {
+      // Set server
       net_addr_init( &srv_addr, server, port );
     }
   }
+
   initialized = 1;
+
+  // Binding this function late allows RoboCortex to detect successful initialization
   ipv4udp.comm_send = sender;
-  h_thread = host->thread_start( receiver );  
+
+  h_thread = host->thread_start( receiver );
 }
 
+// Frees allocated resources
 static void close() {
   if( h_thread ) host->thread_stop( h_thread );
 }
 
-// Called when plugin is loaded
-// Allocate required resources
+// Sets up the plugin descriptor
 pluginclient_t *ipv4udp_open( pluginhost_t *p_host ) {
   memcpy( &ipv4udp.ident, "UDP4", 4 );
   host = p_host;

@@ -61,4 +61,5 @@ extern int config_find_line( char **find_value, char *find_token, FILE *f );
 extern int config_plugin( uint32_t i_ident, char* dst, char* req_token );
 extern void config_parse( int( *callback )( char*, char* ) );
 extern SDL_Rect *rect( SDL_Rect *r, int x, int y, int w, int h );
+extern char unicode_ascii( int uni );
 #endif

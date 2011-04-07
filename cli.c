@@ -10,25 +10,25 @@
 #include "sdl_console.h"
 
 // Plugins
-#define MAX_PLUGINS          16
+#define MAX_PLUGINS           16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
 extern pluginclient_t *ipv4udp_open( pluginhost_t* );
 
 // Protocol
-#define MAX_RETRY             5 // Maximum number of retransmissions of lost packets
+#define MAX_RETRY              5 // Maximum number of retransmissions of lost packets
 
 // Configuration
-#define CLIENT_RPS           50 // Client refreshes per second
+#define CLIENT_RPS            50 // Client refreshes per second
 
 // Timeouts (in refreshes, see CLIENT_RPS)
-#define TIMEOUT_TRUST        16 // Before retransmitting trusted packets
-#define TIMEOUT_STREAM      125 // Before considering connection lost
+#define TIMEOUT_TRUST         16 // Before retransmitting trusted packets
+#define TIMEOUT_STREAM       125 // Before considering connection lost
 
 // Screen defaults
-#define SCREEN_WIDTH        640 // Width
-#define SCREEN_HEIGHT       480 // Height
-#define SCREEN_BPP           32 // Color depth
-#define SCREEN_FS             0 // Start in fullscreen
+#define SCREEN_WIDTH         640 // Width
+#define SCREEN_HEIGHT        480 // Height
+#define SCREEN_BPP            32 // Color depth
+#define SCREEN_FS              0 // Start in fullscreen
 
 // Client state
 enum state_e {
@@ -68,36 +68,36 @@ enum exitcode_e {
 };
 
 // Texts
-static char text_contact[] =  "ESTABLISHING CORTEX...";
-static char text_error[]   =  "   CONNECTION ERROR   ";
-static char text_queued[] =   "  QUEUED FOR CONTROL  ";
-static char text_full[] =     " QUEUE IS FULL, SORRY ";
-static char text_lost[] =     "  CONNECTION IS LOST  ";
-static char text_quit[] =     "   PRESS H FOR HELP   ";
-static char text_version[] =  " WRONG CLIENT VERSION ";
-static char text_blank[] =    "                      ";
-static char text_time[] =     "       00:00:00       ";
-static char text_controls[] = "IN CONTROL - PRESS H FOR HELP";
-static char text_timeout[] =  "TIME LEFT: 00:00";
+static           char  text_contact[] =  "ESTABLISHING CORTEX...";
+static           char  text_error[]   =  "   CONNECTION ERROR   ";
+static           char  text_queued[] =   "  QUEUED FOR CONTROL  ";
+static           char  text_full[] =     " QUEUE IS FULL, SORRY ";
+static           char  text_lost[] =     "  CONNECTION IS LOST  ";
+static           char  text_quit[] =     "   PRESS H FOR HELP   ";
+static           char  text_version[] =  " WRONG CLIENT VERSION ";
+static           char  text_blank[] =    "                      ";
+static           char  text_time[] =     "       00:00:00       ";
+static           char  text_controls[] = "IN CONTROL - PRESS H FOR HELP";
+static           char  text_timeout[] =  "TIME LEFT: 00:00";
 
 // Packet types
-static char pkt_h264[ 4 ] = { 0x00, 0x00, 0x00, 0x01 };
-static char pkt_data[ 4 ] = "DATA";
-static char pkt_helo[ 4 ] = "HELO";
-static char pkt_time[ 4 ] = "TIME";
-static char pkt_ctrl[ 4 ] = "CTRL";
-static char pkt_lost[ 4 ] = "LOST";
-static char pkt_full[ 4 ] = "FULL";
-static char pkt_quit[ 4 ] = "QUIT";
+static           char  pkt_h264[ 4 ] = { 0x00, 0x00, 0x00, 0x01 };
+static           char  pkt_data[ 4 ] = "DATA";
+static           char  pkt_helo[ 4 ] = "HELO";
+static           char  pkt_time[ 4 ] = "TIME";
+static           char  pkt_ctrl[ 4 ] = "CTRL";
+static           char  pkt_lost[ 4 ] = "LOST";
+static           char  pkt_full[ 4 ] = "FULL";
+static           char  pkt_quit[ 4 ] = "QUIT";
 
 // Locals
 static    disp_data_t  disp_data;                       // Data from latest DISP packet
 static    SDL_Surface *spr_logo;                        // Sprites
-static    SDL_Surface *spr_box; 
+static    SDL_Surface *spr_box;
 static    SDL_Surface *screen;                          // Screen surface
 static            int  screen_w = SCREEN_WIDTH;         // Resolution
 static            int  screen_h = SCREEN_HEIGHT;
-static            int  screen_bpp = SCREEN_BPP;         
+static            int  screen_bpp = SCREEN_BPP;
 static            int  fullscreen = SCREEN_FS;          // Fullscreen mode active
 static   linked_buf_t *p_buffer_last;                   // Decoding buffer
 static   linked_buf_t *p_buffer_first;
@@ -142,13 +142,9 @@ static pluginclient_t *keyboard_hook;
 static pluginclient_t *keyboard_binds[ SDLK_LAST ];
 
 // Configuration
-static char config_default[] = "cli.rc"; // Default configuration file
+static           char config_default[] = "cli.rc"; // Default configuration file
 
-// Display message
-static void message( char* text ) {
-  term_write( 1, term_h - 3, text, FONT_RED );
-  message_timeout = 125;
-}
+/* == TRUSTED COMMUNICATIONS ==================================================================== */
 
 // Queues a packet for trusted (non-lossy) transmission
 static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
@@ -196,31 +192,34 @@ static void trust_handler( char* data, int size ) {
   }
 }
 
-static void SetColor( Uint8 red, Uint8 green, Uint8 blue ) {
+/* == GRAPHICS HELPERS ========================================================================== */
+
+// Sets drawing color
+static void draw_color( Uint8 red, Uint8 green, Uint8 blue ) {
   draw_red = red;
   draw_green = green;
   draw_blue = blue;
 }
 
-// Used by DrawWuLine
-static void DrawPixel( short x, short y, Uint8 a ) {
+// Draws an alpha-blended pixel, used by draw_wu
+static void draw_pixel( short x, short y, Uint8 a ) {
   Uint8 cr, cg, cb;
   Uint32 cv;
   if( y >= screen_h || x < 0 || x >= screen_w ) return;
 
   cv = ( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) );
-  
+
   SDL_GetRGB( cv, screen->format, &cr, &cg, &cb );
   cr = ( ( ( int )cr * a ) + ( ( int )draw_red   * ( 255 - a ) ) ) >> 8;
   cg = ( ( ( int )cg * a ) + ( ( int )draw_green * ( 255 - a ) ) ) >> 8;
   cb = ( ( ( int )cb * a ) + ( ( int )draw_blue  * ( 255 - a ) ) ) >> 8;
   cv = SDL_MapRGB( screen->format, cr, cg, cb );
-  
+
   ( *( Uint32* )( ( ( uint8_t* )screen->pixels ) + ( y * screen->pitch + x * 4 ) ) ) = cv;
 }
 
-// Wu-Line implementation, courtesy of http://www.codeproject.com/KB/GDI/antialias.aspx
-static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
+// Draws a wu-line. Implementation, courtesy of http://www.codeproject.com/KB/GDI/antialias.aspx
+static void draw_wu( short X0, short Y0, short X1, short Y1 ) {
    unsigned short IntensityShift, ErrorAdj, ErrorAcc;
    unsigned short ErrorAccTemp, Weighting, WeightingComplementMask;
    short DeltaX, DeltaY, Temp, XDir;
@@ -240,24 +239,24 @@ static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
       XDir = -1;
       DeltaX = -DeltaX;
    }
-   // Draw initial pixel   
-   DrawPixel( X0, Y0, BaseColor );
+   // Draw initial pixel
+   draw_pixel( X0, Y0, BaseColor );
    // Draw horizontal, vertical, diagonal
    if( ( DeltaY = Y1 - Y0 ) == 0 ) {
       while( DeltaX-- != 0 ) {
          X0 += XDir;
-         DrawPixel( X0, Y0, BaseColor );
+         draw_pixel( X0, Y0, BaseColor );
       }
    } else if( DeltaX == 0 ) {
       do {
          Y0++;
-         DrawPixel( X0, Y0, BaseColor );
+         draw_pixel( X0, Y0, BaseColor );
       } while ( --DeltaY != 0 );
    } else if( DeltaX == DeltaY ) {
       do {
          X0 += XDir;
          Y0++;
-         DrawPixel( X0, Y0, BaseColor );
+         draw_pixel( X0, Y0, BaseColor );
       } while ( --DeltaY != 0 );
    } else {
      // Draw X/Y major
@@ -272,8 +271,8 @@ static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
            if( ErrorAcc <= ErrorAccTemp ) X0 += XDir;
            Y0++;
            Weighting = ErrorAcc >> IntensityShift;
-           DrawPixel( X0, Y0, BaseColor + Weighting );
-           DrawPixel( X0 + XDir, Y0, BaseColor + ( Weighting ^ WeightingComplementMask ) );
+           draw_pixel( X0, Y0, BaseColor + Weighting );
+           draw_pixel( X0 + XDir, Y0, BaseColor + ( Weighting ^ WeightingComplementMask ) );
         }
      } else {
        ErrorAdj = ( ( unsigned long) DeltaY << 16) / (unsigned long) DeltaX;
@@ -283,13 +282,12 @@ static void DrawWuLine( short X0, short Y0, short X1, short Y1 ) {
           if ( ErrorAcc <= ErrorAccTemp ) Y0++;
           X0 += XDir;
           Weighting = ErrorAcc >> IntensityShift;
-          DrawPixel( X0, Y0, BaseColor + Weighting );
-          DrawPixel( X0, Y0 + 1, BaseColor + ( Weighting ^ WeightingComplementMask ) );
+          draw_pixel( X0, Y0, BaseColor + Weighting );
+          draw_pixel( X0, Y0 + 1, BaseColor + ( Weighting ^ WeightingComplementMask ) );
        }
      }
-     DrawPixel( X1, Y1, BaseColor );
+     draw_pixel( X1, Y1, BaseColor );
    }
-
    SDL_UnlockSurface( screen );
 }
 
@@ -314,20 +312,14 @@ static void draw_box( unsigned char x, unsigned char y, unsigned char w, unsigne
   }
 }
 
-// Convert unicode to ascii - kind of a hack
-static char UnicodeChar( int uni ){
-  #define INTERNATIONAL_MASK 0xFF80
-  #define UNICODE_MASK       0x007F
-  if( uni == 0 ) return( 0 );
-  if( ( uni & INTERNATIONAL_MASK ) == 0 ) {
-    return( ( char )( toupper( uni & UNICODE_MASK ) ) );
-  } else {
-    return( '?' );
-  }
+// Draws temproray message
+static void draw_message( char* text ) {
+  term_write( 1, term_h - 3, text, FONT_RED );
+  message_timeout = 125;
 }
 
-// Initialize graphical resources   
-static void resource_init() {
+// Load sprites
+static void sprites_init() {
   spr_logo = SDL_LoadBMP( "logo.bmp" );
   if( !spr_logo ) printf( "RoboCortex [error]: Unable to load logo.bmp\n" );
   spr_logo = SDL_DisplayFormat( spr_logo );
@@ -343,14 +335,29 @@ static void resource_init() {
   SDL_SetColorKey( spr_box, SDL_SRCCOLORKEY, SDL_MapRGB( screen->format, 0xFF, 0x00, 0xFF ) );
 }
 
-// Free graphical resources
-static void resource_clean() {
+// Free sprites
+static void sprites_free() {
     SDL_FreeSurface( spr_logo );
 }
 
+// Draws out the help screen
+static void draw_help( int draw ) {
+  unsigned char n;
+  unsigned char y = ( term_h - help_count ) >> 1;
+  for( n = 0; n < help_count; n++ ) {
+    if( draw ) {
+     term_write( ( term_w - 32 ) >> 1, y + n, help[ n ], FONT_GREEN );
+    } else {
+      term_white( ( term_w - 32 ) >> 1, y + n, 32 );
+    }
+  }
+}
+
+/* == CURSOR HELPERS ============================================================================ */
+
 // Grab the cursor (locks cursor to our app)
 static void cursor_grab( int b_grab ) {
-  SDL_GrabMode ret; 
+  SDL_GrabMode ret;
   ret = SDL_WM_GrabInput( b_grab ? SDL_GRAB_ON : SDL_GRAB_OFF );
   b_cursor_grabbed = ( ret & SDL_GRAB_ON ) != 0;
   SDL_ShowCursor( b_cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
@@ -363,7 +370,7 @@ static void cursor_poll( long *ix, long *iy ) {
   static int lx = 0, ly = 0;
   int cx = 0, cy = 0;
   int warp = 0;
-    
+
   if( cursor_hook == NULL || !b_cursor_grabbed ) ready = 0;
   SDL_GetMouseState( &cx, &cy );
   if( ready ) {
@@ -385,23 +392,7 @@ static void cursor_poll( long *ix, long *iy ) {
   lx = cx; ly = cy;
 }
 
-// Draws out the help screen
-static void help_draw() {
-  unsigned char n;
-  unsigned char y = ( term_h - help_count ) >> 1;
-  for( n = 0; n < help_count; n++ ) {
-    term_write( ( term_w - 32 ) >> 1, y + n, help[ n ], FONT_GREEN );
-  }
-}
-
-// Clears the help screen
-static void help_clear() {
-  unsigned char n;
-  unsigned char y = ( term_h - help_count ) >> 1;
-  for( n = 0; n < help_count; n++ ) {
-    term_white( ( term_w - 32 ) >> 1, y + n, 32 );
-  }
-}
+/* == KEYBOARD HELPERS ========================================================================== */
 
 // Switches keyboard layout
 static void set_layout( unsigned char new_layout ) {
@@ -413,54 +404,56 @@ static void set_layout( unsigned char new_layout ) {
       keymap[ KM_LEFT ]  = SDLK_a;
       keymap[ KM_DOWN ]  = SDLK_s;
       keymap[ KM_RIGHT ] = SDLK_d;
-      message( "SWITCHED TO QWERTY" );
+      draw_message( "SWITCHED TO QWERTY" );
       break;
     case KL_DVORAK:
       keymap[ KM_UP ]    = SDLK_COMMA;
       keymap[ KM_LEFT ]  = SDLK_a;
       keymap[ KM_DOWN ]  = SDLK_o;
       keymap[ KM_RIGHT ] = SDLK_e;
-      message( "SWITCHED TO DVORAK" );
+      draw_message( "SWITCHED TO DVORAK" );
       break;
     case KL_AZERTY:
       keymap[ KM_UP ]    = SDLK_z;
       keymap[ KM_LEFT ]  = SDLK_q;
       keymap[ KM_DOWN ]  = SDLK_s;
       keymap[ KM_RIGHT ] = SDLK_d;
-      message( "SWITCHED TO AZERTY" );
+      draw_message( "SWITCHED TO AZERTY" );
       break;
   }
   help[ 0 ][ 10 ] = toupper( keymap[ KM_UP ] );
   help[ 0 ][ 11 ] = toupper( keymap[ KM_LEFT ] );
   help[ 0 ][ 12 ] = toupper( keymap[ KM_DOWN ] );
   help[ 0 ][ 13 ] = toupper( keymap[ KM_RIGHT ] );
-  if( help_shown ) help_draw();
+  draw_help( help_shown );
   ctrl.ctrl.kb = 0;
 }
 
-// Thread handles reception of UDP packets
+/* == COMMUNICATIONS ============================================================================ */
+
+// Processes a data packet
 static void comm_recv( char *buffer, int size ) {
   if( size >= 4 ) {
     memcpy( p_buffer_last->data, buffer, size );
-    
+
     // H264
     if( memcmp( p_buffer_last->data, pkt_h264, 4 ) == 0 ) {
       // h264 packet
       state = STATE_STREAMING;
       retry = 0;
-      
+
       // Push decoder buffer to queue
       p_buffer_last->next = malloc( sizeof( linked_buf_t ) );
       linked_buf_t *p_buf = p_buffer_last;
       p_buffer_last = p_buffer_last->next;
       p_buffer_last->size = 0;
       p_buf->size = size;
-    
+
     // DATA
     } else if( memcmp( p_buffer_last->data, pkt_data, 4 ) == 0 ) {
       if( size >= 4 + sizeof( disp_data_t ) ) {
         memcpy( &disp_data, p_buffer_last->data + 4, sizeof( disp_data_t ) );
-  
+
         // Check if outgoing trusted data recieved, free trusted buffers
         SDL_mutexP( trust_mx );
         if( trust_first ) {
@@ -473,17 +466,17 @@ static void comm_recv( char *buffer, int size ) {
           }
         }
         SDL_mutexV( trust_mx );
-  
+
         // Handle incoming trusted data
         if( ( ( trust_srv + 1 ) & 0xFF ) == disp_data.trust_srv ) {
           trust_handler( p_buffer_last->data + 4 + sizeof( disp_data_t ), size - 4 - sizeof( disp_data_t ) );
         }
       }
-      
+
     // HELO
     } else if( memcmp( p_buffer_last->data, pkt_helo, 4 ) == 0 ) {
       if( state == STATE_CONNECTING ) {
-        
+
         // Go to queued only if version is correct
         if( p_buffer_last->data[ 4 ] != CORTEX_VERSION ) {
           state = STATE_VERSION;
@@ -493,31 +486,33 @@ static void comm_recv( char *buffer, int size ) {
           queue_time = *( int* )&p_buffer_last->data[ 5 ];
         }
       }
-      
+
     // TIME
     } else if( memcmp( p_buffer_last->data, pkt_time, 4 ) == 0 ) {
-      
+
       // Update queue time
       if( state == STATE_QUEUED ) {
         retry = 0;
         queue_time = *( int* )&p_buffer_last->data[ 4 ];
       }
-      
+
     // LOST
     } else if( memcmp( p_buffer_last->data, pkt_lost, 4 ) == 0 ) {
-      
+
       // Connection was lost (server don't know who we are)
       state = STATE_LOST;
-      
+
     // FULL
     } else if( memcmp( p_buffer_last->data, pkt_full, 4 ) == 0 ) {
-      
+
       // Connection could not be established (server queue is full)
       state = STATE_FULL;
-      
+
     }
   }
 }
+
+/* == CONFIGURATION ============================================================================= */
 
 static int config_set( char *value, char *token ) {
   if( token != NULL ) {
@@ -535,6 +530,8 @@ static int config_set( char *value, char *token ) {
   }
   return( 0 );
 }
+
+/* == PLUGIN SYSTEM ============================================================================= */
 
 static int plug_keybind( int key ) {
   // TODO: block reserved keys
@@ -591,15 +588,15 @@ static void plug_help( char *text ) {
 }
 
 static void plug_wu( int x0, int y0, int x1, int y1, uint32_t color ) {
-  SetColor( color >> 16, color >> 8, color );
-  DrawWuLine( x0, y0, x1, y1 );
+  draw_color( color >> 16, color >> 8, color );
+  draw_wu( x0, y0, x1, y1 );
 }
 
 static int plug_cfg( char* dst, char* req_token ) {
   return( config_plugin( plug->ident, dst, req_token ) );
 }
 
-static  int  plug_thread  ( void *pThread ) {
+static int plug_thread( void *pThread ) {
   return( ( ( int( * )() )pThread )() );
 }
 
@@ -607,14 +604,13 @@ static void* plug_thrstart( int( *pThread )() ) {
   return( SDL_CreateThread( plug_thread, ( void* )pThread ) );
 }
 
-static void plug_thrstop ( void* pHandle ) {
+static void plug_thrstop( void* pHandle ) {
   SDL_KillThread( pHandle );
 }
 
 static void plug_thrdelay( int delay ) {
   SDL_Delay( delay );
 }
-
 
 static void load_plugins() {
   int pid;
@@ -666,6 +662,8 @@ static void unload_plugins() {
     if( plug->close ) plug->close();
 }
 
+/* == MAIN THREAD =============================================================================== */
+
 int main( int argc, char *argv[] ) {
   int                pid;                        // Plugin iteration
   int                temp;                       // Various uses
@@ -694,7 +692,7 @@ int main( int argc, char *argv[] ) {
   // Read configuration file
   config_rc = ( argc > 1 ? argv[ 1 ] : config_default );
   config_parse( config_set );
-  
+
   // Validate Configuration
   if( screen_w & ~3 != screen_w || screen_h & ~3 != screen_h ) {
     printf( "Config [error]: Width and height must be a multiple of 16\n" );
@@ -719,14 +717,14 @@ int main( int argc, char *argv[] ) {
     printf( "RoboCortex [error]: Unable to initialize decoder\n" );
     exit( EXIT_DECODER );
   }
-  avcodec_open( pCodecCtx, pCodec );  
+  avcodec_open( pCodecCtx, pCodec );
 
   // Allocate decoder frame
   pFrame = avcodec_alloc_frame();
 
   SDL_Init( SDL_INIT_VIDEO | SDL_INIT_AUDIO );
   SDL_WM_SetCaption( "KiwiRay Client", "KiwiRay Client" );
-  
+
   screen = SDL_SetVideoMode( screen_w, screen_h, screen_bpp, ( fullscreen ? SDL_FULLSCREEN : 0 ) );
   // TODO: need check if fullscreen was possible?
   cursor_grab( fullscreen );
@@ -734,7 +732,7 @@ int main( int argc, char *argv[] ) {
   SDL_EnableUNICODE( SDL_ENABLE );
   SDL_EnableKeyRepeat( 400, 50 );
 
-  resource_init();
+  sprites_init();
   term_init( screen );
 
   set_layout( KL_QWERTY );
@@ -757,13 +755,13 @@ int main( int argc, char *argv[] ) {
     printf( "RoboCortex [error]: Unable to allcate SDL surface\n" );
     exit( EXIT_SURFACE );
   }
-  
+
   p_buffer_last = malloc( sizeof( linked_buf_t ) );;
   p_buffer_first = p_buffer_last;
   p_buffer_last->size = 0;
-  
+
   speech_open();
-  
+
   trust_mx = SDL_CreateMutex();
 
   // Load plugins
@@ -789,7 +787,7 @@ int main( int argc, char *argv[] ) {
       term_crem();
       laststate = state;
       term_clear();
-      if( help_shown ) help_draw();
+      draw_help( help_shown );
       // Initialize view
       if( state != STATE_STREAMING ) {
         switch( state ) {
@@ -847,7 +845,7 @@ int main( int argc, char *argv[] ) {
       // Send CTRL packet
       comm_send( p_ctrl, i_ctrl );
       if( ++retry == TIMEOUT_STREAM ) state = STATE_LOST;
-      
+
       if( p_buffer_first->size ) {
 
         // Decode frame
@@ -857,7 +855,7 @@ int main( int argc, char *argv[] ) {
         if( avcodec_decode_video2( pCodecCtx, pFrame, &temp, &avpkt ) < 0 ) {
           printf( "RoboCortex [info]: Decoding error (packet loss)\n" );
         } else {
-          SDL_LockSurface( frame );      
+          SDL_LockSurface( frame );
 
           const uint8_t * data[1] = { frame->pixels };
           int linesize[1] = { frame->pitch };
@@ -874,11 +872,11 @@ int main( int argc, char *argv[] ) {
           sws_freeContext( convertCtx );
 
           SDL_UnlockSurface( frame );
-          
+
           // Convert to display format for fast blitting
           if( live ) SDL_FreeSurface( live );
           live = SDL_DisplayFormat( frame );
-    
+
           // Update control timer
           term_write( 1, 1, text_controls, FONT_GREEN );
           if( disp_data.timer == 0 ) {
@@ -898,7 +896,7 @@ int main( int argc, char *argv[] ) {
         linked_buf_t *p_buf = p_buffer_first;
         p_buffer_first = p_buffer_first->next;
         free( p_buf );
-        
+
       }
 
       if( live ) {
@@ -912,30 +910,29 @@ int main( int argc, char *argv[] ) {
       // TODO: add resolution (width) support
       if( speech_vis( &p_vis ) == 0 ) {
         for( temp = 0; temp < 636; temp += 4 ) {
-        SetColor( 0x00, 0x3F, 0x00 );
-          DrawWuLine( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 5, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
-          DrawWuLine( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 3, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
-          DrawWuLine( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 5, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
-          DrawWuLine( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 3, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
-          SetColor( 0x00, 0x00, 0x00 );
-          DrawWuLine( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 6, screen_h - 38 + ( p_vis[ temp + 4 ] ) );
+          draw_color( 0x00, 0x3F, 0x00 );
+          draw_wu( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 5, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
+          draw_wu( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 3, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
+          draw_wu( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 5, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
+          draw_wu( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 3, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
+          draw_color( 0x00, 0x00, 0x00 );
+          draw_wu( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 6, screen_h - 38 + ( p_vis[ temp + 4 ] ) );
         }
-        SetColor( 0x00, 0x3F, 0x00 );
-        DrawWuLine( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 4, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
-        DrawWuLine( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 2, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
-        DrawWuLine( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 4, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
-        DrawWuLine( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 2, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
-        SetColor( 0x00, 0x00, 0x00 );
-        DrawWuLine( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 5, screen_h - 38 + ( p_vis[ temp + 3 ] ) );
-        SetColor( 0x3F, 0xFF, 0x3F );
+        draw_color( 0x00, 0x3F, 0x00 );
+        draw_wu( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 4, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
+        draw_wu( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 2, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
+        draw_wu( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 4, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
+        draw_wu( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 2, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
+        draw_color( 0x00, 0x00, 0x00 );
+        draw_wu( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 5, screen_h - 38 + ( p_vis[ temp + 3 ] ) );
+        draw_color( 0x3F, 0xFF, 0x3F );
         for( temp = 0; temp < 636; temp += 4 ) {
-          DrawWuLine( temp, screen_h - 40 + p_vis[ temp ], temp + 4, screen_h - 40 + ( p_vis[ temp + 4 ] ) );
+          draw_wu( temp, screen_h - 40 + p_vis[ temp ], temp + 4, screen_h - 40 + ( p_vis[ temp + 4 ] ) );
         }
-        DrawWuLine( temp, screen_h - 40 + p_vis[ temp ], temp + 3, screen_h - 40 + ( p_vis[ temp + 3 ] ) );
-        
+        draw_wu( temp, screen_h - 40 + p_vis[ temp ], temp + 3, screen_h - 40 + ( p_vis[ temp + 3 ] ) );
       }
 
-    } else {      
+    } else {
 
       // Clear screen
       SDL_FillRect( screen, rect( &r, 0, 0, screen->w, screen->h ), 0 );
@@ -976,7 +973,7 @@ int main( int argc, char *argv[] ) {
           break;
       }
       if( statec ) statec--; else statec = 100;
-    
+
     }
 
     // Allow plugins to draw
@@ -988,7 +985,7 @@ int main( int argc, char *argv[] ) {
 
     // Clear messages
     if( message_timeout ) {
-      if( --message_timeout == 0 ) term_white( 1, 27, 38 );
+      if( --message_timeout == 0 ) term_white( 1, term_h - 3, 38 );
     }
 
     // Draw terminal overlay
@@ -1059,12 +1056,8 @@ int main( int argc, char *argv[] ) {
                 break;
 
               case SDLK_h: // Toggle help
-                help_shown = !help_shown;
-                if( help_shown ) {
-                  help_draw();
-                } else {
-                  help_clear();
-                }
+                draw_help( help_shown = !help_shown );
+                break;
 
               default: // WASD control scheme
                 if( event.key.keysym.sym == keymap[ KM_LEFT ] ) {
@@ -1077,14 +1070,14 @@ int main( int argc, char *argv[] ) {
                   ctrl.ctrl.kb |= KB_DOWN;
                 } else if( state == STATE_STREAMING && keyboard_binds[ event.key.keysym.sym ] != NULL ) {
                   plug = keyboard_binds[ event.key.keysym.sym ]; // Notify plugin
-                  if( plug->keyboard ) plug->keyboard( E_KEYDOWN, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
+                  if( plug->keyboard ) plug->keyboard( E_KEYDOWN, event.key.keysym.sym, unicode_ascii( event.key.keysym.unicode ) );
                 }
                 break;
 
             }
           } else if( state == STATE_STREAMING ) {
-            plug = keyboard_hook;            
-            if( plug->keyboard ) plug->keyboard( E_KEYDOWN, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
+            plug = keyboard_hook;
+            if( plug->keyboard ) plug->keyboard( E_KEYDOWN, event.key.keysym.sym, unicode_ascii( event.key.keysym.unicode ) );
           }
           break;
         case SDL_KEYUP:
@@ -1100,11 +1093,11 @@ int main( int argc, char *argv[] ) {
               ctrl.ctrl.kb &= ~KB_DOWN;
             } else if( keyboard_binds[ event.key.keysym.sym ] != NULL ) {
               plug = keyboard_binds[ event.key.keysym.sym ]; // Notify plugin
-              if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
+              if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, unicode_ascii( event.key.keysym.unicode ) );
             }
           } else if( keyboard_hook ) {
             plug = keyboard_hook; // Notify plugin
-            if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, UnicodeChar( event.key.keysym.unicode ) );
+            if( plug->keyboard ) plug->keyboard( E_KEYUP, event.key.keysym.sym, unicode_ascii( event.key.keysym.unicode ) );
           }
           break;
       }
@@ -1112,7 +1105,7 @@ int main( int argc, char *argv[] ) {
 
     // Delay 1/CLIENT_RPS seconds, constantly correct for processing overhead
     time_diff = SDL_GetTicks() - time_target;
-    if( time_diff > 1000 / CLIENT_RPS ) { 
+    if( time_diff > 1000 / CLIENT_RPS ) {
       time_diff = 0;
       time_target = SDL_GetTicks();
       printf( "RoboCortex [warning]: Cannot keep up with desired RPS\n" );
@@ -1130,7 +1123,7 @@ int main( int argc, char *argv[] ) {
   comm_send( pkt_quit, 4 );
 
   // Clean up
-  resource_clean();
+  sprites_free();
   avcodec_close( pCodecCtx );
   SDL_DestroyMutex( trust_mx );
   SDL_FreeSurface( frame );
