@@ -58,6 +58,16 @@ enum kbd_layout_e {
   KL_SIZE
 };
 
+// Exit code list
+enum exitcode_e {
+  EXIT_OK,
+  EXIT_NETWORK,
+  EXIT_SOCKET,
+  EXIT_CONFIG,
+  EXIT_DECODER,
+  EXIT_SURFACE
+};
+
 // Texts
 static char text_contact[] =  "ESTABLISHING CORTEX...";
 static char text_error[]   =  "   CONNECTION ERROR   ";
@@ -670,32 +680,32 @@ int main( int argc, char *argv[] ) {
   // Validate Configuration
   if( screen_w & ~3 != screen_w || screen_h & ~3 != screen_h ) {
     printf( "Config [error]: Width and height must be a multiple of 16\n" );
-    exit( 1 );
+    exit( EXIT_CONFIG );
   }
   if( screen_w > 4096 || screen_h > 4096 ) {
     printf( "Config [error]: Width or height must not exceed 4096\n" );
-    exit( 1 );
+    exit( EXIT_CONFIG );
   }
   if( screen_w < 640 || screen_h < 480 ) {
     printf( "Config [error]: Minimum resolution is 640x480\n" );
-    exit( 1 );
+    exit( EXIT_CONFIG );
   }
 
   if( net_init() < 0 ) {
     printf( "RoboCortex [error]: Network initialization failed\n" );
-    exit( 1 );
+    exit( EXIT_NETWORK );
   }
 
   if( net_sock( &h_sock ) < 0 ) {
     printf( "RoboCortex [error]: Socket aquire failed\n" );
-    exit( 1 );
+    exit( EXIT_SOCKET );
   };
   
   if( server ) {
     net_addr_init( &srv_addr, server, port );
   } else {
     printf( "Config [error]: No server specified/wrong format\n" );
-    exit( 1 );
+    exit( EXIT_CONFIG );
   }
 
   // Initialize decoder
@@ -706,7 +716,7 @@ int main( int argc, char *argv[] ) {
   av_init_packet( &avpkt );
   if( !pCodec ) {
     printf( "RoboCortex [error]: Unable to initialize decoder\n" );
-    exit( 5 );
+    exit( EXIT_DECODER );
   }
   avcodec_open( pCodecCtx, pCodec );  
 
@@ -744,7 +754,7 @@ int main( int argc, char *argv[] ) {
 
   if( !frame ) {
     printf( "RoboCortex [error]: Unable to allcate SDL surface\n" );
-    exit( 1 );
+    exit( EXIT_SURFACE );
   }
   
   p_buffer_last = malloc( sizeof( linked_buf_t ) );;
@@ -1126,5 +1136,5 @@ int main( int argc, char *argv[] ) {
 
   printf( "RoboCortex [info]: KTHXBYE!\n" );
 
-  exit( 0 );
+  exit( EXIT_OK );
 }
