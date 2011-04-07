@@ -9,9 +9,6 @@
 #width               320  #stream width (320)
 #height              240  #stream height (240)
 
-## Communications
-#port               6979  #udp port (6979)
-
 ## Timeouts (in frames, see fps)
 #timeout_connection  100  #before connection is closed if no data has arrived (100)
 #timeout_control    7500  #before control session is ended (7500)
@@ -53,6 +50,12 @@ dst_w               256
 dst_h                48
 
 ## Plugin configurations
+
+## IPv4 UDP Communications
+plugin             UDP4
+#port               6979  #udp port (6979)
+
+## KiwiRay platform plugin
 plugin             KIWI
 timeout_emoticon    100  #before emoticon is removed (100)
 commport           COM3  #communications port

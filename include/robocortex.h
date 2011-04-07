@@ -58,7 +58,7 @@ extern char *config_rc;
 extern unsigned char term_w, term_h;
 extern int config_read_line( char **value, char **token, FILE *f );
 extern int config_find_line( char **find_value, char *find_token, FILE *f );
-extern int config_plugin( char *ident, char* dst, char* req_token );
+extern int config_plugin( uint32_t i_ident, char* dst, char* req_token );
 extern void config_parse( int( *callback )( char*, char* ) );
 extern SDL_Rect *rect( SDL_Rect *r, int x, int y, int w, int h );
 #endif

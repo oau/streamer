@@ -12,10 +12,10 @@
 // Plugins
 #define MAX_PLUGINS          16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
+extern pluginclient_t *ipv4udp_open( pluginhost_t* );
 
 // Protocol
 #define MAX_RETRY             5 // Maximum number of retransmissions of lost packets
-#define DEFAULT_PORT       6979 // Default port
 
 // Configuration
 #define CLIENT_RPS           50 // Client refreshes per second
@@ -61,11 +61,10 @@ enum kbd_layout_e {
 // Exit code list
 enum exitcode_e {
   EXIT_OK,
-  EXIT_NETWORK,
-  EXIT_SOCKET,
   EXIT_CONFIG,
   EXIT_DECODER,
-  EXIT_SURFACE
+  EXIT_SURFACE,
+  EXIT_COMMS
 };
 
 // Texts
@@ -95,15 +94,11 @@ static char pkt_quit[ 4 ] = "QUIT";
 static    disp_data_t  disp_data;                       // Data from latest DISP packet
 static    SDL_Surface *spr_logo;                        // Sprites
 static    SDL_Surface *spr_box; 
-static       NET_ADDR  srv_addr;                        // Server address
-static       uint32_t  server;                          // Server ip
-static       uint16_t  port = DEFAULT_PORT;             // Server port
 static    SDL_Surface *screen;                          // Screen surface
 static            int  screen_w = SCREEN_WIDTH;         // Resolution
 static            int  screen_h = SCREEN_HEIGHT;
 static            int  screen_bpp = SCREEN_BPP;         
 static            int  fullscreen = SCREEN_FS;          // Fullscreen mode active
-static       NET_SOCK  h_sock;                          // Socket handle
 static   linked_buf_t *p_buffer_last;                   // Decoding buffer
 static   linked_buf_t *p_buffer_first;
 static  volatile  int  state = STATE_CONNECTING;        // Client state
@@ -122,6 +117,7 @@ static         SDLKey  keymap[ KM_SIZE ];               // Keyboard remapping
 static   unsigned int  message_timeout = 0;
 static    ctrl_data_t  ctrl;                            // Part of CTRL packet
 static            int  help_shown;                      // Help is displayed
+static           void  ( *comm_send )( char*, int );    // Communications handler
 
 // Help texts
 static           char  help[ 16 ][ 33 ] = {
@@ -318,105 +314,6 @@ static void draw_box( unsigned char x, unsigned char y, unsigned char w, unsigne
   }
 }
 
-static int plug_keybind( int key ) {
-  // TODO: block reserved keys
-  if( keyboard_binds[ key ] == NULL ) {
-    keyboard_binds[ key ] = plug;
-    return( 1 );
-  }
-  return( 0 );
-}
-
-static void plug_keyfree( int key ) {
-  if( keyboard_binds[ key ] == plug ) keyboard_binds[ key ] = NULL;
-}
-
-static int plug_keyhook() {
-  if( keyboard_hook == NULL ) {
-    ctrl.ctrl.kb = 0;
-    keyboard_hook = plug;
-    return( 1 );
-  }
-  return( 0 );
-}
-
-static void plug_keyrelease() {
-  if( keyboard_hook == plug ) keyboard_hook = NULL;
-}
-
-static int plug_csrhook( int show ) {
-  if( cursor_hook == NULL ) {
-    cursor_hook = plug;
-    SDL_ShowCursor( show ? SDL_ENABLE : SDL_DISABLE );
-    return( 1 );
-  }
-  return( 0 );
-}
-
-static void plug_csrrelease() {
-  if( cursor_hook == plug ) {
-    cursor_hook = NULL;
-    SDL_ShowCursor( b_cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
-  }
-}
-
-static void plug_csrmove( int x, int y ) {
-  if( cursor_hook == plug ) SDL_WarpMouse( x, y );
-}
-
-static void plug_send( void *data, unsigned char size ) {
-  trust_queue( plug->ident, data, size );
-}
-
-static void plug_help( char *text ) {
-  if( strlen( text ) <= 32 && help_count < 16 ) strcpy( help[ help_count++ ], text );
-}
-
-static void plug_wu( int x0, int y0, int x1, int y1, uint32_t color ) {
-  SetColor( color >> 16, color >> 8, color );
-  DrawWuLine( x0, y0, x1, y1 );
-}
-
-static void load_plugins() {
-  int pid;
-  host.key_bind         = plug_keybind;
-  host.key_free         = plug_keyfree;
-  host.keyboard_hook    = plug_keyhook;
-  host.keyboard_release = plug_keyrelease;
-  host.cursor_hook      = plug_csrhook;
-  host.cursor_release   = plug_csrrelease;
-  host.cursor_move      = plug_csrmove;
-  host.text_cins        = term_cins;
-  host.text_crem        = term_crem;
-  host.text_write       = term_write;
-  host.text_clear       = term_white;
-  host.text_valid       = term_knows;
-  host.server_send      = plug_send;
-  host.help_add         = plug_help;
-  host.speak_text       = speech_queue;
-  host.draw_wuline      = plug_wu;
-  host.draw_box         = draw_box;
-  host.text_cols        = term_w;
-  host.text_rows        = term_h;
-
-  printf( "RoboCortex [info]: Loading plugins...\n" );
-  // Load kiwiray plugin
-  plugs[ plugs_count++ ] = kiwiray_open( &host );
-  printf( "RoboCortex [info]: Initializing plugins...\n" );
-  // plugin->init
-  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ ) {
-    if( plug->init ) plug->init();
-  }
-  printf( "RoboCortex [info]: Plugins loaded and initialized\n" );
-}
-
-static void unload_plugins() {
-  int pid;
-  // plugin->close
-  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
-    if( plug->close ) plug->close();
-}
-
 // Convert unicode to ascii - kind of a hack
 static char UnicodeChar( int uni ){
   #define INTERNATIONAL_MASK 0xFF80
@@ -542,97 +439,89 @@ static void set_layout( unsigned char new_layout ) {
 }
 
 // Thread handles reception of UDP packets
-static int receiver( void *unused ) {
-  int temp, size;
-  while( 1 ) {
-    temp = sizeof( srv_addr );
-    size = net_recv( &h_sock, p_buffer_last->data, 8192, &srv_addr );
-    if( size >= 4 ) {
+static void comm_recv( char *buffer, int size ) {
+  if( size >= 4 ) {
+    memcpy( p_buffer_last->data, buffer, size );
+    
+    // H264
+    if( memcmp( p_buffer_last->data, pkt_h264, 4 ) == 0 ) {
+      // h264 packet
+      state = STATE_STREAMING;
+      retry = 0;
       
-      // H264
-      if( memcmp( p_buffer_last->data, pkt_h264, 4 ) == 0 ) {
-        // h264 packet
-        state = STATE_STREAMING;
-        retry = 0;
-        
-        // Push decoder buffer to queue
-        p_buffer_last->next = malloc( sizeof( linked_buf_t ) );
-        linked_buf_t *p_buf = p_buffer_last;
-        p_buffer_last = p_buffer_last->next;
-        p_buffer_last->size = 0;
-        p_buf->size = size;
-      
-      // DATA
-      } else if( memcmp( p_buffer_last->data, pkt_data, 4 ) == 0 ) {
-        if( size >= 4 + sizeof( disp_data_t ) ) {
-          memcpy( &disp_data, p_buffer_last->data + 4, sizeof( disp_data_t ) );
-
-          // Check if outgoing trusted data recieved, free trusted buffers
-          SDL_mutexP( trust_mx );
-          if( trust_first ) {
-            if( disp_data.trust_cli == trust_cli ) {
-              linked_buf_t* p_trust = trust_first;
-              trust_first = trust_first->next;
-              trust_cli++;
-              trust_timeout = 0;
-              free( p_trust );
-            }
-          }
-          SDL_mutexV( trust_mx );
-
-          // Handle incoming trusted data
-          if( ( ( trust_srv + 1 ) & 0xFF ) == disp_data.trust_srv ) {
-            trust_handler( p_buffer_last->data + 4 + sizeof( disp_data_t ), size - 4 - sizeof( disp_data_t ) );
+      // Push decoder buffer to queue
+      p_buffer_last->next = malloc( sizeof( linked_buf_t ) );
+      linked_buf_t *p_buf = p_buffer_last;
+      p_buffer_last = p_buffer_last->next;
+      p_buffer_last->size = 0;
+      p_buf->size = size;
+    
+    // DATA
+    } else if( memcmp( p_buffer_last->data, pkt_data, 4 ) == 0 ) {
+      if( size >= 4 + sizeof( disp_data_t ) ) {
+        memcpy( &disp_data, p_buffer_last->data + 4, sizeof( disp_data_t ) );
+  
+        // Check if outgoing trusted data recieved, free trusted buffers
+        SDL_mutexP( trust_mx );
+        if( trust_first ) {
+          if( disp_data.trust_cli == trust_cli ) {
+            linked_buf_t* p_trust = trust_first;
+            trust_first = trust_first->next;
+            trust_cli++;
+            trust_timeout = 0;
+            free( p_trust );
           }
         }
-        
-      // HELO
-      } else if( memcmp( p_buffer_last->data, pkt_helo, 4 ) == 0 ) {
-        if( state == STATE_CONNECTING ) {
-          
-          // Go to queued only if version is correct
-          if( p_buffer_last->data[ 4 ] != CORTEX_VERSION ) {
-            state = STATE_VERSION;
-          } else {
-            state = STATE_QUEUED;
-            retry = 0;
-            queue_time = *( int* )&p_buffer_last->data[ 5 ];
-          }
+        SDL_mutexV( trust_mx );
+  
+        // Handle incoming trusted data
+        if( ( ( trust_srv + 1 ) & 0xFF ) == disp_data.trust_srv ) {
+          trust_handler( p_buffer_last->data + 4 + sizeof( disp_data_t ), size - 4 - sizeof( disp_data_t ) );
         }
-        
-      // TIME
-      } else if( memcmp( p_buffer_last->data, pkt_time, 4 ) == 0 ) {
-        
-        // Update queue time
-        if( state == STATE_QUEUED ) {
-          retry = 0;
-          queue_time = *( int* )&p_buffer_last->data[ 4 ];
-        }
-        
-      // LOST
-      } else if( memcmp( p_buffer_last->data, pkt_lost, 4 ) == 0 ) {
-        
-        // Connection was lost (server don't know who we are)
-        state = STATE_LOST;
-        
-      // FULL
-      } else if( memcmp( p_buffer_last->data, pkt_full, 4 ) == 0 ) {
-        
-        // Connection could not be established (server queue is full)
-        state = STATE_FULL;
-        
       }
+      
+    // HELO
+    } else if( memcmp( p_buffer_last->data, pkt_helo, 4 ) == 0 ) {
+      if( state == STATE_CONNECTING ) {
+        
+        // Go to queued only if version is correct
+        if( p_buffer_last->data[ 4 ] != CORTEX_VERSION ) {
+          state = STATE_VERSION;
+        } else {
+          state = STATE_QUEUED;
+          retry = 0;
+          queue_time = *( int* )&p_buffer_last->data[ 5 ];
+        }
+      }
+      
+    // TIME
+    } else if( memcmp( p_buffer_last->data, pkt_time, 4 ) == 0 ) {
+      
+      // Update queue time
+      if( state == STATE_QUEUED ) {
+        retry = 0;
+        queue_time = *( int* )&p_buffer_last->data[ 4 ];
+      }
+      
+    // LOST
+    } else if( memcmp( p_buffer_last->data, pkt_lost, 4 ) == 0 ) {
+      
+      // Connection was lost (server don't know who we are)
+      state = STATE_LOST;
+      
+    // FULL
+    } else if( memcmp( p_buffer_last->data, pkt_full, 4 ) == 0 ) {
+      
+      // Connection could not be established (server queue is full)
+      state = STATE_FULL;
+      
     }
   }
 }
 
 static int config_set( char *value, char *token ) {
   if( token != NULL ) {
-    if( strcmp( token, "server" ) == 0 ) {
-      server = net_dtoa( value );
-    } else if( strcmp( token, "port" ) == 0 ) {
-      port = atoi( value );
-    } else if( strcmp( token, "width" ) == 0 ) {
+    if( strcmp( token, "width" ) == 0 ) {
       screen_w = atoi( value );
     } else if( strcmp( token, "height" ) == 0 ) {
       screen_h = atoi( value );
@@ -645,6 +534,136 @@ static int config_set( char *value, char *token ) {
     } else printf( "Config [warning]: unknown entry %s\n", token );
   }
   return( 0 );
+}
+
+static int plug_keybind( int key ) {
+  // TODO: block reserved keys
+  if( keyboard_binds[ key ] == NULL ) {
+    keyboard_binds[ key ] = plug;
+    return( 1 );
+  }
+  return( 0 );
+}
+
+static void plug_keyfree( int key ) {
+  if( keyboard_binds[ key ] == plug ) keyboard_binds[ key ] = NULL;
+}
+
+static int plug_keyhook() {
+  if( keyboard_hook == NULL ) {
+    ctrl.ctrl.kb = 0;
+    keyboard_hook = plug;
+    return( 1 );
+  }
+  return( 0 );
+}
+
+static void plug_keyrelease() {
+  if( keyboard_hook == plug ) keyboard_hook = NULL;
+}
+
+static int plug_csrhook( int show ) {
+  if( cursor_hook == NULL ) {
+    cursor_hook = plug;
+    SDL_ShowCursor( show ? SDL_ENABLE : SDL_DISABLE );
+    return( 1 );
+  }
+  return( 0 );
+}
+
+static void plug_csrrelease() {
+  if( cursor_hook == plug ) {
+    cursor_hook = NULL;
+    SDL_ShowCursor( b_cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
+  }
+}
+
+static void plug_csrmove( int x, int y ) {
+  if( cursor_hook == plug ) SDL_WarpMouse( x, y );
+}
+
+static void plug_send( void *data, unsigned char size ) {
+  trust_queue( plug->ident, data, size );
+}
+
+static void plug_help( char *text ) {
+  if( strlen( text ) <= 32 && help_count < 16 ) strcpy( help[ help_count++ ], text );
+}
+
+static void plug_wu( int x0, int y0, int x1, int y1, uint32_t color ) {
+  SetColor( color >> 16, color >> 8, color );
+  DrawWuLine( x0, y0, x1, y1 );
+}
+
+static int plug_cfg( char* dst, char* req_token ) {
+  return( config_plugin( plug->ident, dst, req_token ) );
+}
+
+static  int  plug_thread  ( void *pThread ) {
+  return( ( ( int( * )() )pThread )() );
+}
+
+static void* plug_thrstart( int( *pThread )() ) {
+  return( SDL_CreateThread( plug_thread, ( void* )pThread ) );
+}
+
+static void plug_thrstop ( void* pHandle ) {
+  SDL_KillThread( pHandle );
+}
+
+static void plug_thrdelay( int delay ) {
+  SDL_Delay( delay );
+}
+
+
+static void load_plugins() {
+  int pid;
+  host.thread_start     = plug_thrstart;
+  host.thread_stop      = plug_thrstop;
+  host.thread_delay     = plug_thrdelay;
+  host.cfg_read         = plug_cfg;
+  host.key_bind         = plug_keybind;
+  host.key_free         = plug_keyfree;
+  host.keyboard_hook    = plug_keyhook;
+  host.keyboard_release = plug_keyrelease;
+  host.cursor_hook      = plug_csrhook;
+  host.cursor_release   = plug_csrrelease;
+  host.cursor_move      = plug_csrmove;
+  host.text_cins        = term_cins;
+  host.text_crem        = term_crem;
+  host.text_write       = term_write;
+  host.text_clear       = term_white;
+  host.text_valid       = term_knows;
+  host.server_send      = plug_send;
+  host.help_add         = plug_help;
+  host.speak_text       = speech_queue;
+  host.draw_wuline      = plug_wu;
+  host.draw_box         = draw_box;
+  host.text_cols        = term_w;
+  host.text_rows        = term_h;
+  host.comm_recv        = comm_recv;
+
+  printf( "RoboCortex [info]: Loading plugins...\n" );
+  // Load plugins
+  plugs[ plugs_count++ ] = kiwiray_open( &host );
+  plugs[ plugs_count++ ] = ipv4udp_open( &host );
+  printf( "RoboCortex [info]: Initializing plugins...\n" );
+  // plugin->init
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ ) {
+    if( plug->init ) plug->init();
+    if( plug->comm_send ) {
+      if( comm_send ) printf( "RoboCortex [error]: Multiple communications plugins loaded\n" );
+      comm_send = plug->comm_send;
+    }
+  }
+  printf( "RoboCortex [info]: Plugins loaded and initialized\n" );
+}
+
+static void unload_plugins() {
+  int pid;
+  // plugin->close
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+    if( plug->close ) plug->close();
 }
 
 int main( int argc, char *argv[] ) {
@@ -660,7 +679,6 @@ int main( int argc, char *argv[] ) {
   AVFrame           *pFrame;                     // Used in the decoding process
   struct SwsContext *convertCtx;                 // Used in the scaling/conversion process
   AVPacket           avpkt;                      // Used in the decoding process
-  SDL_Thread        *hReceiver;                  // Thread handle to UDP receiver
   SDL_Rect           r;                          // Used for various graphics operations
   SDL_Surface       *live = NULL;                // Live decoded video surface
   char              *p_vis;                      // Pointer to speech visualization data
@@ -688,23 +706,6 @@ int main( int argc, char *argv[] ) {
   }
   if( screen_w < 640 || screen_h < 480 ) {
     printf( "Config [error]: Minimum resolution is 640x480\n" );
-    exit( EXIT_CONFIG );
-  }
-
-  if( net_init() < 0 ) {
-    printf( "RoboCortex [error]: Network initialization failed\n" );
-    exit( EXIT_NETWORK );
-  }
-
-  if( net_sock( &h_sock ) < 0 ) {
-    printf( "RoboCortex [error]: Socket aquire failed\n" );
-    exit( EXIT_SOCKET );
-  };
-  
-  if( server ) {
-    net_addr_init( &srv_addr, server, port );
-  } else {
-    printf( "Config [error]: No server specified/wrong format\n" );
     exit( EXIT_CONFIG );
   }
 
@@ -765,12 +766,13 @@ int main( int argc, char *argv[] ) {
   
   trust_mx = SDL_CreateMutex();
 
-  // Create receiving thread
-  hReceiver = SDL_CreateThread( receiver, NULL );
-  
   // Load plugins
   load_plugins();
   atexit( unload_plugins );
+  if( comm_send == NULL ) {
+    printf( "RoboCortex [error]: No communications plugin loaded\n" );
+    exit( EXIT_COMMS );
+  }
 
   time_target = SDL_GetTicks();
   while( !quit ) {
@@ -843,7 +845,7 @@ int main( int argc, char *argv[] ) {
       SDL_mutexV( trust_mx );
 
       // Send CTRL packet
-      net_send( &h_sock, p_ctrl, i_ctrl, &srv_addr );
+      comm_send( p_ctrl, i_ctrl );
       if( ++retry == TIMEOUT_STREAM ) state = STATE_LOST;
       
       if( p_buffer_first->size ) {
@@ -946,7 +948,7 @@ int main( int argc, char *argv[] ) {
             if( ++retry == MAX_RETRY ) {
               state = STATE_ERROR;
             } else {
-              net_send( &h_sock, pkt_helo, 4, &srv_addr );
+              comm_send( pkt_helo, 4 );
             }
           }
           break;
@@ -968,7 +970,7 @@ int main( int argc, char *argv[] ) {
             if( ++retry == MAX_RETRY ) {
               state = STATE_ERROR;
             } else {
-              net_send( &h_sock, pkt_time, 4, &srv_addr );
+              comm_send( pkt_time, 4 );
             }
           }
           break;
@@ -1125,7 +1127,7 @@ int main( int argc, char *argv[] ) {
   }
 
   // Send QUIT
-  net_send( &h_sock, pkt_quit, 4, &srv_addr );
+  comm_send( pkt_quit, 4 );
 
   // Clean up
   resource_clean();

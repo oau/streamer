@@ -17,6 +17,8 @@ typedef struct {
   void     ( *client_send  )( void* data, unsigned char size );
   // Enable/disable a capture device
   void     ( *cap_enable   )( int device, int enable );
+  // Process a received packet
+  void     ( *comm_recv    )( char* data, int size, remote_t *addr );
   // Valid in tick(), when client is connected only
   // Contains control/steering information
   ctrl_t  *ctrl; // Current values
@@ -51,4 +53,6 @@ typedef struct {
   void ( *recv       )( void *data, unsigned char size );
   // Called when a video packet has been encoded for transmission to client
   void ( *stream     )( unsigned char *packet, int size );
+  // Called when a packet needs to be sent to remote end
+  void ( *comm_send  )( char* data, int size, remote_t *addr );
 } pluginclient_t;

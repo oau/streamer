@@ -70,12 +70,15 @@ static FILE* config_open() {
 }
 
 // Reads plugin configuration
-int config_plugin( char *ident, char* dst, char* req_token ) {
+int config_plugin( uint32_t i_ident, char* dst, char* req_token ) {
   int ret = 0;
   char *value, *token;
+  char ident[ 5 ], *p_ident = ident;
+  *( uint32_t* )ident = i_ident;
+  ident[ 4 ] = 0;
   FILE *cf;
   if( cf = config_open() ) {
-    if( config_find_line( &ident, "plugin", cf ) ) {
+    if( config_find_line( &p_ident, "plugin", cf ) ) {
       while( config_read_line( &value, &token, cf ) ) {
         if( strcmp( token, "plugin" ) == 0 ) break;
         if( strcmp( token, req_token ) == 0 ) {

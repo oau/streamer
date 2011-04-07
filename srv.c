@@ -14,12 +14,12 @@
 // Plugins
 #define MAX_PLUGINS          16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
+extern pluginclient_t *ipv4udp_open( pluginhost_t* );
 
 // Save the stream
 //#define SAVE_STREAM            "server.h264"
 
 // Protocol
-#define PORT               6979 // Default port
 #define MAX_CLIENTS          10 // Max number of clients allowed in the quuee
 
 // Capture (device may not be capable and return another size)
@@ -83,12 +83,6 @@ enum exitcode_e {
   EXIT_CONFIG
 };
 
-// Sockets
-static NET_SOCK h_sock;
-static NET_ADDR srv_addr;
-static NET_ADDR cli_addr;
-static      int port = PORT;
-
 // Locals
 static int quit     = 0; // Time to quit (SIGINT etc.)
 static int do_intra = 0; // Time to intra-refresh (New client connected)
@@ -105,7 +99,7 @@ static       int  direct;
 static linked_buf_t *trust_first = NULL;
 static linked_buf_t *trust_last = NULL;
 static          int  trust_timeout;
-static SDL_mutex    *trust_mx;
+static    SDL_mutex *trust_mx;
 
 // Packet types
 static char pkt_data[ 4 ] = "DATA";
@@ -128,8 +122,8 @@ static            int  stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = 
 static         x264_t *encoder;
 static x264_picture_t  pic_in, pic_out;
 
-// Threads
-static SDL_Thread *hReceiver;
+// Receive data mutex TODO: replace with buffering system and semaphore?
+static  SDL_mutex *receive_mx;
 
 // Timeouts
 static int timeout_connection = TIMEOUT_CONNECTION;
@@ -202,8 +196,6 @@ static int config_set( char *value, char *token ) {
       stream_h = atoi( value );
     } else if( strcmp( token, "fps" ) == 0 ) {
       fps = atoi( value );
-    } else if( strcmp( token, "port" ) == 0 ) {
-      port = atoi( value );
     } else if( strcmp( token, "queue" ) == 0 ) {
       max_clients = atoi( value );
     } else if( strcmp( token, "timeout_connection" ) == 0 ) {
@@ -274,41 +266,6 @@ static int config_set( char *value, char *token ) {
     cap_count = n;
   }
   return( 0 );
-}
-
-// Plugin helpers
-static  int  plug_thread  ( void *pThread ) { return( ( ( int( * )() )pThread )() ); }
-static void* plug_thrstart( int( *pThread )() ) { return( SDL_CreateThread( plug_thread, ( void* )pThread ) ); }
-static void  plug_thrstop ( void* pHandle ) { SDL_KillThread( pHandle ); }
-static void  plug_thrdelay( int delay ) { SDL_Delay( delay ); }
-static void  plug_send    ( void* data, unsigned char size ) { trust_queue( plug->ident, data, size ); }
-static void  plug_cap     ( int dev, int enable ) { if( dev < cap_count ) cap[ dev ].enable = enable; }
-static  int  plug_cfg     ( char* dst, char* req_token ) { return( config_plugin( ( char* )&plug->ident, dst, req_token ) ); }
-
-static void load_plugins() {
-  int pid;
-  host.thread_start = plug_thrstart;
-  host.thread_stop  = plug_thrstop;
-  host.thread_delay = plug_thrdelay;
-  host.speak_text   = speech_queue;
-  host.client_send  = plug_send;
-  host.cfg_read     = plug_cfg;
-  host.cap_enable   = plug_cap;
-  printf( "RoboCortex [info]: Loading plugins...\n" );
-  // Load kiwiray plugin
-  plugs[ plugs_count++ ] = kiwiray_open( &host );
-  printf( "RoboCortex [info]: Initializing plugins...\n" );
-  // plugin->init
-  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
-    if( plug->init ) plug->init();
-  printf( "RoboCortex [info]: Plugins loaded and initialized\n" );
-}
-
-static void unload_plugins() {
-  int pid;
-  // plugin->close
-  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
-    if( plug->close ) plug->close();
 }
 
 // Clear trusted queue
@@ -480,87 +437,84 @@ static void clients_tick() {
   SDL_mutexV( client_mx );
 }
 
-// Thread handles reception of UDP packets
-int receiver( void *unused ) {
-  int size;
-  client_t *p_client;
-  remote_t remote = { &cli_addr, sizeof( NET_ADDR ), NULL };
-  char buffer[ 8192 ];
-  while( 1 ) {
-    net_addr_init( &cli_addr, NET_ADDR_ANY, 0 );
-    size = net_recv( &h_sock, buffer, 8192, &cli_addr );
-    // Find client
-    p_client = clients_find( &remote );
-    if( p_client ) {
-      if( size >= 4 ) {
-        if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
-          // Re-send HELO+version+time
-          buffer[ 4 ] = CORTEX_VERSION;
-          net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
-        } else if( memcmp( buffer, pkt_time, 4 ) == 0 ) {
-          // Send TIME+time
-          net_send( &h_sock, queue_time( buffer, 4, p_client ), 4 + sizeof( int ), &cli_addr );
+void comm_recv( char *buffer, int size, remote_t *remote ) {
+  client_t *p_client = clients_find( remote );
+  SDL_mutexP( receive_mx );
+  if( p_client ) {
+    if( size >= 4 ) {
+      if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
+        // Re-send HELO+version+time
+        buffer[ 4 ] = CORTEX_VERSION;
+        //net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
+        ( ( pluginclient_t* )( remote->handler ) )->comm_send( queue_time( buffer, 5, p_client ), 5 + sizeof( int ), remote );
+      } else if( memcmp( buffer, pkt_time, 4 ) == 0 ) {
+        // Send TIME+time
+        //net_send( &h_sock, queue_time( buffer, 4, p_client ), 4 + sizeof( int ), &cli_addr );
+        ( ( pluginclient_t* )( remote->handler ) )->comm_send( queue_time( buffer, 4, p_client ), 4 + sizeof( int ), remote );
+        SDL_mutexP( client_mx );
+        p_client->timeout = timeout_connection;
+        SDL_mutexV( client_mx );
+      } else if( memcmp( buffer, pkt_quit, 4 ) == 0 ) {
+        // Abort connection
+        SDL_mutexP( client_mx );
+        p_client->timeout = 0;
+        SDL_mutexV( client_mx );
+      } else if( memcmp( buffer, pkt_ctrl, 4 ) == 0 ) {
+        // Copy control data
+        if( size >= 4 + sizeof( ctrl_data_t ) ) {
           SDL_mutexP( client_mx );
           p_client->timeout = timeout_connection;
+          p_client->glitch = timeout_glitch;
           SDL_mutexV( client_mx );
-        } else if( memcmp( buffer, pkt_quit, 4 ) == 0 ) {
-          // Abort connection
-          SDL_mutexP( client_mx );
-          p_client->timeout = 0;
-          SDL_mutexV( client_mx );
-        } else if( memcmp( buffer, pkt_ctrl, 4 ) == 0 ) {
-          // Copy control data
-          if( size >= 4 + sizeof( ctrl_data_t ) ) {
-            SDL_mutexP( client_mx );
-            p_client->timeout = timeout_connection;
-            p_client->glitch = timeout_glitch;
-            SDL_mutexV( client_mx );
-            memcpy( &p_client->ctrl, buffer + 4, sizeof( ctrl_data_t ) );
-            // Initial control data, reset diff
-            if( !p_client->got_first ) {
-              p_client->got_first = 1;
-              memcpy( &p_client->last, &p_client->ctrl.ctrl, sizeof( ctrl_t ) );
-            }
-            // Check if outgoing trusted data recieved, free trusted buffers
-            SDL_mutexP( trust_mx );
-            if( trust_first ) {
-              if( p_client->ctrl.trust_srv == p_client->trust_srv ) {
-                linked_buf_t* p_trust = trust_first;
-                trust_first = trust_first->next;
-                p_client->trust_srv++;
-                trust_timeout = 0;
-                free( p_trust );
-              }
-            }
-            SDL_mutexV( trust_mx );
-            // Handle incoming trusted data
-            if( ( ( p_client->trust_cli + 1 ) & 0xFF ) == p_client->ctrl.trust_cli ) {
-              trust_handler( p_client, buffer + 4 + sizeof( ctrl_data_t ), size - 4 - sizeof( ctrl_data_t ) );
+          memcpy( &p_client->ctrl, buffer + 4, sizeof( ctrl_data_t ) );
+          // Initial control data, reset diff
+          if( !p_client->got_first ) {
+            p_client->got_first = 1;
+            memcpy( &p_client->last, &p_client->ctrl.ctrl, sizeof( ctrl_t ) );
+          }
+          // Check if outgoing trusted data recieved, free trusted buffers
+          SDL_mutexP( trust_mx );
+          if( trust_first ) {
+            if( p_client->ctrl.trust_srv == p_client->trust_srv ) {
+              linked_buf_t* p_trust = trust_first;
+              trust_first = trust_first->next;
+              p_client->trust_srv++;
+              trust_timeout = 0;
+              free( p_trust );
             }
           }
-        }
-      }
-    } else {
-      // Client unknown
-      if( size >= 4 ) {
-        if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
-          // Handshake, add
-          p_client = clients_add( &remote );
-          if( p_client ) {
-            // Connection accepted, send HELO+version+time
-            buffer[ 4 ] = CORTEX_VERSION;
-            net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
-          } else {
-            // Server is full, send FULL
-            net_send( &h_sock, pkt_full, 4, &cli_addr );
+          SDL_mutexV( trust_mx );
+          // Handle incoming trusted data
+          if( ( ( p_client->trust_cli + 1 ) & 0xFF ) == p_client->ctrl.trust_cli ) {
+            trust_handler( p_client, buffer + 4 + sizeof( ctrl_data_t ), size - 4 - sizeof( ctrl_data_t ) );
           }
-        } else {
-          // Unknown connection, send LOST
-          net_send( &h_sock, pkt_lost, 4, &cli_addr );
         }
       }
     }
+  } else {
+    // Client unknown
+    if( size >= 4 ) {
+      if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
+        // Handshake, add
+        p_client = clients_add( remote );
+        if( p_client ) {
+          // Connection accepted, send HELO+version+time
+          buffer[ 4 ] = CORTEX_VERSION;
+          //net_send( &h_sock, queue_time( buffer, 5, p_client ), 5 + sizeof( int ), &cli_addr );
+          ( ( pluginclient_t* )( remote->handler ) )->comm_send( queue_time( buffer, 5, p_client ), 5 + sizeof( int ), remote );
+        } else {
+          // Server is full, send FULL
+          //net_send( &h_sock, pkt_full, 4, &cli_addr );
+          ( ( pluginclient_t* )( remote->handler ) )->comm_send( pkt_full, 4, remote );
+        }
+      } else {
+        // Unknown connection, send LOST
+        //net_send( &h_sock, pkt_lost, 4, &cli_addr );
+        ( ( pluginclient_t* )( remote->handler ) )->comm_send( pkt_lost, 4, remote );
+      }
+    }
   }
+  SDL_mutexV( receive_mx );
 }
 
 // Convert, crop, scale and blit all RGB24 capture sources onto YUV420P destination
@@ -579,18 +533,67 @@ static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
   }
 }
 
+// Plugin helpers
+static  int  plug_thread  ( void *pThread ) { return( ( ( int( * )() )pThread )() ); }
+static void* plug_thrstart( int( *pThread )() ) { return( SDL_CreateThread( plug_thread, ( void* )pThread ) ); }
+static void  plug_thrstop ( void* pHandle ) { SDL_KillThread( pHandle ); }
+static void  plug_thrdelay( int delay ) { SDL_Delay( delay ); }
+static void  plug_send    ( void* data, unsigned char size ) { trust_queue( plug->ident, data, size ); }
+static void  plug_cap     ( int dev, int enable ) { if( dev < cap_count ) cap[ dev ].enable = enable; }
+static  int  plug_cfg     ( char* dst, char* req_token ) { return( config_plugin( plug->ident, dst, req_token ) ); }
+
+static void load_plugins() {
+  int pid;
+  host.thread_start = plug_thrstart;
+  host.thread_stop  = plug_thrstop;
+  host.thread_delay = plug_thrdelay;
+  host.speak_text   = speech_queue;
+  host.client_send  = plug_send;
+  host.cfg_read     = plug_cfg;
+  host.cap_enable   = plug_cap;
+  host.comm_recv    = comm_recv;
+  printf( "RoboCortex [info]: Loading plugins...\n" );
+  // Load plugins
+  plugs[ plugs_count++ ] = kiwiray_open( &host );
+  plugs[ plugs_count++ ] = ipv4udp_open( &host );
+  printf( "RoboCortex [info]: Initializing plugins...\n" );
+  // plugin->init
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+    if( plug->init ) plug->init();
+  printf( "RoboCortex [info]: Plugins loaded and initialized\n" );
+}
+
+static void unload_plugins() {
+  int pid;
+  // plugin->close
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+    if( plug->close ) plug->close();
+}
+
 static void terminate( int z ) {
   printf( "\nRoboCortex [info]: SIGINT received, shutting down...\n\n" );
   quit = 1;
 }
 
 // Cleanup
-void close_message()  { printf( "\nRoboCortex [info]: KTHXBYE!\n" ); }
-void encoder_free()   { x264_encoder_close( encoder );                }
-void picture_free()   { x264_picture_clean( &pic_in );                }
-void trust_mx_free()  { SDL_DestroyMutex( trust_mx );                 }
-void client_mx_free() { SDL_DestroyMutex( client_mx );                }
-void receiver_free()  { SDL_KillThread( hReceiver );                  }
+void close_message() {
+  printf( "\nRoboCortex [info]: KTHXBYE!\n" );
+}
+
+void encoder_free() {
+  x264_encoder_close( encoder );
+}
+
+void picture_free() {
+  x264_picture_clean( &pic_in );
+}
+
+void mutex_free() {
+  SDL_DestroyMutex( trust_mx );
+  SDL_DestroyMutex( client_mx );
+  SDL_DestroyMutex( receive_mx );
+}
+
 void sws_free() {
   int n;
   for( n = 0; n < cap_count; n++ ) {
@@ -598,6 +601,7 @@ void sws_free() {
     cap[ n ].swsCtx = NULL;
   }
 }
+
 void clients_free() {
   int n;
   for( n = 0; n < max_clients; n++ ) {
@@ -649,27 +653,6 @@ int main( int argc, char *argv[] ) {
   clients = malloc( sizeof( client_t ) * max_clients );
   memset( clients, 0, sizeof( client_t ) * max_clients );
   atexit( clients_free );
-
-  // Initialize network
-  if( net_init() < 0 ) {
-    fprintf( stderr, "RoboCortex [error]: Network initialization failed\n" );
-    exit( EXIT_NETWORK );
-  } else {
-  	
-    // Aquire socket
-    if( net_sock( &h_sock ) < 0 ) {
-      fprintf( stderr, "RoboCortex [error]: Socket aquire failed\n" );
-      exit( EXIT_SOCKET );
-    } else {
-
-      // Bind socket to PORT
-      net_addr_init( &srv_addr, NET_ADDR_ANY, port );
-      if( net_bind( &h_sock, &srv_addr ) < 0 ) {
-        fprintf( stderr, "RoboCortex [error]: Socket bind failed\n" );
-        exit( EXIT_BIND );
-      }
-    }
-  }
 
   // Initialize audio
   if( SDL_Init( SDL_INIT_AUDIO ) == 0 ) {
@@ -772,8 +755,8 @@ int main( int argc, char *argv[] ) {
   host.stream_h = stream_h;
 
   // Create receiving thread
-  hReceiver = SDL_CreateThread( receiver, NULL );
-  atexit( receiver_free );
+//  hReceiver = SDL_CreateThread( receiver, NULL );
+//  atexit( receiver_free );
   
   // Load plugins
   load_plugins();
@@ -785,12 +768,13 @@ int main( int argc, char *argv[] ) {
 #endif
   speech_queue( "INITIALIZED AND READY FOR CONNECTION" );
 
-  printf( "\nRoboCortex [info]: listening on port %i...\n", port );
+  printf( "\nRoboCortex [info]: Initialized and ready for connection...\n" );
 
+  // Create mutexes
   trust_mx = SDL_CreateMutex();
-  atexit( trust_mx_free );
   client_mx = SDL_CreateMutex();
-  atexit( client_mx_free );
+  receive_mx = SDL_CreateMutex();
+  atexit( mutex_free );
 
 #ifdef SAVE_STREAM
   sf = fopen( SAVE_STREAM, "wb" );
@@ -869,7 +853,8 @@ int main( int argc, char *argv[] ) {
     if( temp ) {
 
     	// Send H.264 frame
-      net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
+      //net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
+      ( ( pluginclient_t* )( client_first->remote.handler ) )->comm_send( p_buffer, i_buffer, &client_first->remote );
       
       // Build DATA packet
       memcpy( p_buffer, "DATA", 4 );
@@ -898,7 +883,8 @@ int main( int argc, char *argv[] ) {
         if( plug->stream ) plug->stream( p_buffer, i_buffer );
 
       // Send DATA packet
-      net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
+      //net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
+      ( ( pluginclient_t* )( client_first->remote.handler ) )->comm_send( p_buffer, i_buffer, &client_first->remote );
       
     } else {
       // plugin->still

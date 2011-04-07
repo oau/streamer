@@ -13,40 +13,50 @@ enum event_e {
 };
 
 typedef struct {
+  // Requests a parameter from the configuration file
+  int      ( *cfg_read     )( char *value, char *token );
+  // Start a new thread
+  void    *( *thread_start )( int( *fp_thread )() );
+  // Forcibly kill the specified thread
+  void     ( *thread_stop  )( void *h_thread );
+  // Block (delay) thread for the specified number of milliseconds
+  void     ( *thread_delay )( int ms );
   // Binds the specified key
-  int ( *key_bind )( int key );
+  int  ( *key_bind         )( int key );
   // Free (un-bind) the specified key
-  void ( *key_free )( int key );
+  void ( *key_free         )( int key );
   // Hooks the keyboard (piping all keyboard events to plugin)
-  int ( *keyboard_hook )();
+  int  ( *keyboard_hook    )();
   // Release (un-hook) the keyboard
   void ( *keyboard_release )();
   // Hooks the cursor (piping all cursor events to plugin)
-  int ( *cursor_hook )( int show );
+  int  ( *cursor_hook      )( int show );
   // Release (un-hook) the cursor
-  void ( *cursor_release )();
+  void ( *cursor_release   )();
   // Move cursor (only when hooked)
-  void ( *cursor_move )( int x, int y );
+  void ( *cursor_move      )( int x, int y );
   // Insert flashing text caret at specified location
-  void ( *text_cins )( unsigned char x, unsigned char y );
+  void ( *text_cins        )( unsigned char x, unsigned char y );
   // Remove flashing text caret
-  void ( *text_crem )();
+  void ( *text_crem        )();
   // Write text to screen
-  void ( *text_write )( unsigned char x, unsigned char y, char *text, unsigned char font );
+  void ( *text_write       )( unsigned char x, unsigned char y, char *text, unsigned char font );
   // Clears text from screen
-  void ( *text_clear )( unsigned char x, unsigned char y, unsigned char count );
+  void ( *text_clear       )( unsigned char x, unsigned char y, unsigned char count );
   // Returns whether the character is valid as text or not
-  int ( *text_valid )( char ascii );
+  int ( *text_valid        )( char ascii );
   // Send a data packet to the server
-  void ( *server_send )( void* data, unsigned char size );
+  void ( *server_send      )( void* data, unsigned char size );
   // Adds a line of text (max 32 characters) to the help window
-  void ( *help_add )( char* text );
+  void ( *help_add         )( char* text );
   // Use TTS to play back the specified text
-  void ( *speak_text )( char* );
+  void ( *speak_text       )( char* );
   // Draws a popup box
-  void ( *draw_box )( unsigned char x, unsigned char y, unsigned char w, unsigned char h, SDL_Surface *s );
+  void ( *draw_box         )( unsigned char x, unsigned char y, unsigned char w, unsigned char h, SDL_Surface *s );
   // Draws wu-lines
-  void ( *draw_wuline )( int x0, int y0, int x1, int y1, uint32_t color );
+  void ( *draw_wuline      )( int x0, int y0, int x1, int y1, uint32_t color );
+  // Process a received packet
+  void ( *comm_recv        )( char* data, int size );
   // Text propteries
   unsigned char text_cols, text_rows;
 } pluginhost_t;
@@ -68,4 +78,6 @@ typedef struct {
   void ( *cursor     )( int event, int x, int y );  
   // Called when an event has occurred causing all hooks to be lost
   void ( *lost       )();
+  // Called when a packet needs to be sent to remote end
+  void ( *comm_send  )( char* data, int size );
 } pluginclient_t;

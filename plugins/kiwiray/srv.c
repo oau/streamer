@@ -244,7 +244,7 @@ static void init() {
   if( host->cfg_read( serdev, "commport" ) ) {
     h_thread = host->thread_start( commthread );
   } else {
-    printf( "KiwiRay [warning]: Configuration - comms missing, disabling serial\n" );
+    printf( "KiwiRay [warning]: Configuration - commport missing, disabling serial\n" );
   }
 }
 
