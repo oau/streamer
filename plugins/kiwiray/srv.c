@@ -84,7 +84,7 @@ static int commthread() {
   int b_working = 0;
   unsigned char n;
   unsigned char emotilast = 255;
-  char p_pkt[ 64 ] = {  0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 };
+  char p_pkt[ 64 ] = { ( char )0xFF, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
   // Initial serial startup
   b_working = ( serial_open( serdev ) == 0 );

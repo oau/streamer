@@ -14,7 +14,7 @@ static sam_list_t *sam_first = NULL;
 static sam_list_t *sam_last = NULL;
 
 // SAM buffers
-static unsigned char sam_buffer[ 22050 * 10 ];
+static char          sam_buffer[ 22050 * 10 ];
 static int           sam_size;
 static int           sam_pos;
 static int           sam_speaking = 0;

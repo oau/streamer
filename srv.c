@@ -160,7 +160,7 @@ static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
 }
 
 // Handles trusted data packets
-static void trust_handler( client_t *p_client, unsigned char* data, int size ) {
+static void trust_handler( client_t *p_client, char* data, int size ) {
   unsigned char n;
   int pid;
   uint32_t ident;
@@ -439,7 +439,7 @@ static void clients_tick() {
 /* == COMMUNICATIONS ============================================================================ */
 
 // Processes a data packet
-void comm_recv( char *buffer, int size, remote_t *remote ) {
+static void comm_recv( char *buffer, int size, remote_t *remote ) {
   client_t *p_client = clients_find( remote );
   SDL_mutexP( receive_mx );
   if( p_client ) {
@@ -622,7 +622,7 @@ int main( int argc, char *argv[] ) {
   x264_nal_t    *nals;
   int            i_nals;
   int            frame_size;
-  unsigned char  p_buffer[ 65536 ] __attribute__ ((aligned));
+  char           p_buffer[ 65536 ] __attribute__ ((aligned));
   unsigned int   i_buffer;
   int            pl, pm, pt = 0;
   int            nalc = 0, nalb = 0;

@@ -849,7 +849,7 @@ int main( int argc, char *argv[] ) {
       if( p_buffer_first->size ) {
 
         // Decode frame
-        avpkt.data = p_buffer_first->data;
+        avpkt.data = ( unsigned char* )p_buffer_first->data;
         avpkt.size = p_buffer_first->size;
         avpkt.flags = AV_PKT_FLAG_KEY;
         if( avcodec_decode_video2( pCodecCtx, pFrame, &temp, &avpkt ) < 0 ) {

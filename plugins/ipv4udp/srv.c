@@ -26,7 +26,7 @@ int receiver() {
   while( 1 ) {
     net_addr_init( &cli_addr, NET_ADDR_ANY, 0 );
     size = net_recv( &h_sock, buffer, 8192, &cli_addr );
-    if( size >= 4 ) comm_recv( buffer, size, &remote );
+    if( size >= 4 ) host->comm_recv( buffer, size, &remote );
   }
   return( 0 );
 }

@@ -52,7 +52,7 @@ typedef struct {
   // Called when a data packet is received from the client
   void ( *recv       )( void *data, unsigned char size );
   // Called when a video packet has been encoded for transmission to client
-  void ( *stream     )( unsigned char *packet, int size );
+  void ( *stream     )( char *packet, int size );
   // Called when a packet needs to be sent to remote end
   void ( *comm_send  )( char* data, int size, remote_t *addr );
 } pluginclient_t;
