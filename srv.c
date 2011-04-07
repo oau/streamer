@@ -40,7 +40,7 @@ extern pluginclient_t *kiwiray_open( pluginhost_t* );
 
 // Client data
 struct client_t {
-  NET_ADDR         client;
+  remote_t         remote;
   int              timeout;
   int              timer;
   int              glitch;
@@ -325,22 +325,31 @@ static void trust_clear() {
 }
 
 // Add client, return index or -1 if queue is full
-static client_t *clients_add( NET_ADDR *client ) {
+static client_t *clients_add( remote_t *remote ) {
   int n, pid;
   client_t *p_ret = NULL;
   // Iterate client table
   SDL_mutexP( client_mx );
   if( direct ) {
-    if( memcmp( clients, client, sizeof( NET_ADDR ) ) != 0 ) {
-      memcpy( clients, client, sizeof( NET_ADDR ) );
-      clients->trust_cli = 0xFF;
-      clients->trust_srv = 0x00;
-      clients->got_first = 0;
-      clients->timeout = timeout_connection;
-      do_intra = 1;
-      // plugin->connected( 1 )
-      for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
-        if( plug->connected ) plug->connected( 1 );
+    if( clients->remote.size == remote->size ) {
+      if( memcmp( clients->remote.addr, remote->addr, remote->size ) == 0 ) {
+    //if( memcmp( clients, client, sizeof( NET_ADDR ) ) != 0 ) {
+        if( clients->remote.addr ) free( clients->remote.addr );
+        clients->remote.addr = malloc( remote->size );
+        memcpy( clients->remote.addr, remote->addr, remote->size );
+        clients->remote.size = remote->size;
+        clients->remote.handler = remote->handler;
+        //memcpy( &clients->remote,
+        //memcpy( clients, client, sizeof( NET_ADDR ) );
+        clients->trust_cli = 0xFF;
+        clients->trust_srv = 0x00;
+        clients->got_first = 0;
+        clients->timeout = timeout_connection;
+        do_intra = 1;
+        // plugin->connected( 1 )
+        for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
+          if( plug->connected ) plug->connected( 1 );
+      }
     }
     if( client_first == NULL ) {
       client_first = clients;
@@ -354,7 +363,11 @@ static client_t *clients_add( NET_ADDR *client ) {
       if( !clients[ n ].timeout ) {
       	// Add client to table
         printf( "RoboCortex [info]: Client %i connected\n", n );
-        memcpy( &clients[ n ].client, client, sizeof( NET_ADDR ) );
+        if( clients[ n ].remote.addr ) free( clients[ n ].remote.addr );
+        clients[ n ].remote.addr = malloc( remote->size );
+        memcpy( clients[ n ].remote.addr, remote->addr, remote->size );
+        clients[ n ].remote.size = remote->size;
+        clients[ n ].remote.handler = remote->handler;
         clients[ n ].next = NULL;
         clients[ n ].prev = client_last;
         clients[ n ].trust_cli = 0xFF;
@@ -385,14 +398,16 @@ static client_t *clients_add( NET_ADDR *client ) {
 }
 
 // Find client index
-static client_t *clients_find( NET_ADDR *client ) {
+static client_t *clients_find( remote_t *remote ) {
   int n;
   client_t *p_ret = NULL;
   SDL_mutexP( client_mx );
   for( n = 0; n < max_clients; n++ ) {
     if( clients[ n ].timeout ) {
-      if( net_addr_get( &clients[ n ].client ) == net_addr_get( client ) ) {
-        if( net_port_get( &clients[ n ].client ) == net_port_get( client ) ) {
+      if( clients[ n ].remote.size == remote->size ) {
+        if( memcmp( clients[ n ].remote.addr, remote->addr, remote->size ) == 0 ) {
+      //if( net_addr_get( &clients[ n ].client ) == net_addr_get( client ) ) {
+      //  if( net_port_get( &clients[ n ].client ) == net_port_get( client ) ) {
           p_ret = &clients[ n ];
           break;
         }
@@ -400,7 +415,7 @@ static client_t *clients_find( NET_ADDR *client ) {
     }
   }
   SDL_mutexV( client_mx );
-  if( direct ) p_ret = clients_add( client );
+  if( direct ) p_ret = clients_add( remote );
   return( p_ret );
 }
 
@@ -469,12 +484,13 @@ static void clients_tick() {
 int receiver( void *unused ) {
   int size;
   client_t *p_client;
+  remote_t remote = { &cli_addr, sizeof( NET_ADDR ), NULL };
   char buffer[ 8192 ];
   while( 1 ) {
     net_addr_init( &cli_addr, NET_ADDR_ANY, 0 );
     size = net_recv( &h_sock, buffer, 8192, &cli_addr );
     // Find client
-    p_client = clients_find( &cli_addr );
+    p_client = clients_find( &remote );
     if( p_client ) {
       if( size >= 4 ) {
         if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
@@ -529,7 +545,7 @@ int receiver( void *unused ) {
       if( size >= 4 ) {
         if( memcmp( buffer, pkt_helo, 4 ) == 0 ) {
           // Handshake, add
-          p_client = clients_add( &cli_addr );
+          p_client = clients_add( &remote );
           if( p_client ) {
             // Connection accepted, send HELO+version+time
             buffer[ 4 ] = CORTEX_VERSION;
@@ -569,19 +585,25 @@ static void terminate( int z ) {
 }
 
 // Cleanup
-void encoder_close()   { x264_encoder_close( encoder );                }
-void picture_close()   { x264_picture_clean( &pic_in );                }
-void trust_mx_close()  { SDL_DestroyMutex( trust_mx );                 }
-void client_mx_close() { SDL_DestroyMutex( client_mx );                }
-void receiver_close()  { SDL_KillThread( hReceiver );                  }
-void clients_close()   { free( clients );                              }
-void close_message()   { printf( "\nRoboCortex [info]: KTHXBYE!\n" ); }
-void sws_close() {
+void close_message()  { printf( "\nRoboCortex [info]: KTHXBYE!\n" ); }
+void encoder_free()   { x264_encoder_close( encoder );                }
+void picture_free()   { x264_picture_clean( &pic_in );                }
+void trust_mx_free()  { SDL_DestroyMutex( trust_mx );                 }
+void client_mx_free() { SDL_DestroyMutex( client_mx );                }
+void receiver_free()  { SDL_KillThread( hReceiver );                  }
+void sws_free() {
   int n;
   for( n = 0; n < cap_count; n++ ) {
     if( cap[ n ].swsCtx != NULL ) sws_freeContext( cap[ n ].swsCtx );
     cap[ n ].swsCtx = NULL;
   }
+}
+void clients_free() {
+  int n;
+  for( n = 0; n < max_clients; n++ ) {
+    if( clients[ n ].remote.addr ) free( clients[ n ].remote.addr );
+  }
+  free( clients );
 }
 
 int main( int argc, char *argv[] ) {
@@ -626,7 +648,7 @@ int main( int argc, char *argv[] ) {
   // Allocate client memory
   clients = malloc( sizeof( client_t ) * max_clients );
   memset( clients, 0, sizeof( client_t ) * max_clients );
-  atexit( clients_close );
+  atexit( clients_free );
 
   // Initialize network
   if( net_init() < 0 ) {
@@ -657,7 +679,7 @@ int main( int argc, char *argv[] ) {
   }
 
   // Initialize capture sources
-  atexit( capture_close );
+  atexit( capture_free );
   for( n = 0; n < cap_count; n++ ) {
     cap_w = cap[ n ].w;
     cap_h = cap[ n ].h;
@@ -672,7 +694,7 @@ int main( int argc, char *argv[] ) {
   }
   
   // Initialize scaling and conversion contexts
-  atexit( sws_close );
+  atexit( sws_free );
   for( n = 0; n < cap_count; n++ ) {
     cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_RGB24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
     if( cap[ n ].swsCtx == NULL ) {
@@ -735,11 +757,11 @@ int main( int argc, char *argv[] ) {
 
   // Open encoder
   encoder = x264_encoder_open( &param );
-  atexit( encoder_close );
+  atexit( encoder_free );
   
   // Allocate I420 picture
   if( x264_picture_alloc( &pic_in, X264_CSP_I420, stream_w, stream_h ) == 0 ) {
-    atexit( picture_close );
+    atexit( picture_free );
   } else {
     exit( EXIT_PICTURE );
   }
@@ -751,7 +773,7 @@ int main( int argc, char *argv[] ) {
 
   // Create receiving thread
   hReceiver = SDL_CreateThread( receiver, NULL );
-  atexit( receiver_close );
+  atexit( receiver_free );
   
   // Load plugins
   load_plugins();
@@ -759,16 +781,16 @@ int main( int argc, char *argv[] ) {
   
 #ifndef DISABLE_SPEECH
   speech_open();
-  atexit( speech_close );
+  atexit( speech_free );
 #endif
   speech_queue( "INITIALIZED AND READY FOR CONNECTION" );
 
   printf( "\nRoboCortex [info]: listening on port %i...\n", port );
 
   trust_mx = SDL_CreateMutex();
-  atexit( trust_mx_close );
+  atexit( trust_mx_free );
   client_mx = SDL_CreateMutex();
-  atexit( client_mx_close );
+  atexit( client_mx_free );
 
 #ifdef SAVE_STREAM
   sf = fopen( SAVE_STREAM, "wb" );
@@ -847,7 +869,7 @@ int main( int argc, char *argv[] ) {
     if( temp ) {
 
     	// Send H.264 frame
-      net_send( &h_sock, p_buffer, i_buffer, &client_first->client );
+      net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
       
       // Build DATA packet
       memcpy( p_buffer, "DATA", 4 );
@@ -876,7 +898,7 @@ int main( int argc, char *argv[] ) {
         if( plug->stream ) plug->stream( p_buffer, i_buffer );
 
       // Send DATA packet
-      net_send( &h_sock, p_buffer, i_buffer, &client_first->client );
+      net_send( &h_sock, p_buffer, i_buffer, ( NET_ADDR* )client_first->remote.addr );
       
     } else {
       // plugin->still

@@ -60,7 +60,7 @@ extern "C" unsigned char * capture_fetch( int dev ) {
   return( buffer );
 }
 
-extern "C" void capture_close() {
+extern "C" void capture_free() {
 	unsigned int dev;
 	for( dev = 0; dev < devs_count; dev++ ) {
   	devs[ dev ]->VI.stopDevice( devs[ dev ]->dev );	
@@ -115,7 +115,7 @@ extern "C" unsigned char * capture_fetch( int dev ) {
     return( devs[ dev ].buffer );
 }
 
-extern "C" void capture_close() {
+extern "C" void capture_free() {
 	// TODO: ?
 	devs_count = 0;
 }

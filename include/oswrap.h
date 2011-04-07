@@ -74,7 +74,7 @@ int serial_close ();
 // Camera API
 unsigned char * capture_fetch( int dev );
 int             capture_init ( char* device, int fps, int *w, int *h );
-void            capture_close();
+void            capture_free ();
 
 #endif
 

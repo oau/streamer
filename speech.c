@@ -133,7 +133,7 @@ void speech_queue( char* speak ) {
 
 }
 
-void speech_close() {
+void speech_free() {
 }
 
 int speech_state() {
