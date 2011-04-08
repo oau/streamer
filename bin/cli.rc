@@ -6,7 +6,7 @@
 #width               640  #width (640)
 #height              480  #height (480)
 #bpp                  32  #color depth (32)
-fullscreen            0  #start in fullscreen (0)
+#fullscreen            0  #start in fullscreen (0)
 
 ## Plugin configurations
 
