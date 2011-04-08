@@ -3,8 +3,8 @@
 ## param value #description (default)
 
 ## Screen resolution
-#width               800  #width (640)
-#height              600  #height (480)
+#width               640  #width (640)
+#height              480  #height (480)
 #bpp                  32  #color depth (32)
 fullscreen            0  #start in fullscreen (0)
 
