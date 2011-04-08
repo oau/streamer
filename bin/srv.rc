@@ -1,0 +1,61 @@
+## Configuration file for RoboCortex server
+## Parameters are not checked, so make sure you've got them right or the server may crash
+## param value #description (default)
+
+## Server FPS
+#fps                  25  #capture and stream fps, also affects timeouts (25)
+
+## Properties of video stream
+#width               320  #stream width (320)
+#height              240  #stream height (240)
+
+## Timeouts (in frames, see fps)
+#timeout_connection  100  #before connection is closed if no data has arrived (100)
+#timeout_control    7500  #before control session is ended (7500)
+#timeout_trust         8  #before retransmitting trusted packets (8)
+#timeout_glitch        2  #before robot stops moving if a connection glitches/is lost (2)
+
+## Client management
+queue                 50  #max number of clients in queue (10)
+                          #0 will disable queueing and is used when a direct connection
+                          #to a single client is used instead of multi-client support.
+
+## Main camera
+device                0  #device index for windows (-1 for list), device path for linux
+cap_w               320  #capture width
+cap_h               240  #capture height
+## Settings will default to:
+#src_x                 0  #crop image x
+#src_y                 0  #crop image y
+#src_w               320  #crop image width
+#src_h               240  #crop image height
+#dst_x                 0  #draw image x
+#dst_y                 0  #draw image y
+#dst_w               320  #draw image width
+#dst_h               240  #draw image height
+
+## Rear-view mirror
+device                0
+cap_w               320
+cap_h               240
+## Crop image
+src_x                 0
+src_y               150
+src_w               320
+src_h                60
+## Draw "mirror" at top of screen
+dst_x                32
+dst_y                32
+dst_w               256
+dst_h                48
+
+## Plugin configurations
+
+## IPv4 UDP Communications
+plugin             UDP4
+#port               6979  #udp port (6979)
+
+## KiwiRay platform plugin
+plugin             KIWI
+timeout_emoticon    100  #before emoticon is removed (100)
+commport           COM3  #communications port
