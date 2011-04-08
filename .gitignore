@@ -3,6 +3,7 @@
 /sam/bin/
 .dropbox
 /work/
+/bin/*.rc
 
 # Ignores for windows
 desktop.ini
