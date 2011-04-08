@@ -433,6 +433,7 @@ static void set_layout( unsigned char new_layout ) {
 
 // Processes a data packet
 static void comm_recv( char *buffer, int size ) {
+  linked_buf_t *p_buffer_temp;
   if( size >= 4 ) {
     memcpy( p_buffer_last->data, buffer, size );
 
@@ -635,6 +636,7 @@ static void load_plugins() {
   host.speak_text       = speech_queue;
   host.draw_wuline      = plug_wu;
   host.draw_box         = draw_box;
+  host.draw_message     = draw_message;
   host.text_cols        = term_w;
   host.text_rows        = term_h;
   host.comm_recv        = comm_recv;
@@ -686,6 +688,7 @@ int main( int argc, char *argv[] ) {
   Uint32             time_target;                // Timing target
   Sint32             time_diff;                  // Timing differential
   FILE              *cf;                         // Configuration file
+  int                do_decode;                  // Frame available for decoding
 
   printf( "RoboCortex [info]: OHAI!\n" );
 
@@ -777,6 +780,7 @@ int main( int argc, char *argv[] ) {
     
     speech_poll();
     cursor_poll( &ctrl.ctrl.mx, &ctrl.ctrl.my );
+    do_decode = 0;
 
     if( state != laststate ) {
       if( state == STATE_STREAMING ) ctrl.ctrl.kb = 0;
@@ -847,7 +851,7 @@ int main( int argc, char *argv[] ) {
       if( ++retry == TIMEOUT_STREAM ) state = STATE_LOST;
 
       if( p_buffer_first->size ) {
-
+        do_decode = 1;
         // Decode frame
         avpkt.data = ( unsigned char* )p_buffer_first->data;
         avpkt.size = p_buffer_first->size;
@@ -1105,18 +1109,15 @@ int main( int argc, char *argv[] ) {
 
     // Delay 1/CLIENT_RPS seconds, constantly correct for processing overhead
     time_diff = SDL_GetTicks() - time_target;
-    if( time_diff > 10000 / CLIENT_RPS ) {
+    printf( "decode: %i, time: %i, diff: %i, ", do_decode, SDL_GetTicks(), time_diff );
+    if( time_diff > 1000 ) {
       printf( "RoboCortex [warning]: Cannot keep up with desired RPS\n" );
       time_target = SDL_GetTicks();
-      time_diff = 0;
-    }
-    if( time_diff > 1000 / CLIENT_RPS ) {
-      time_diff = 1000 / CLIENT_RPS;
+      time_diff = ( 1000 / CLIENT_RPS );
     }
     time_target += 1000 / CLIENT_RPS;
-    //printf( "Next target %i\n", time_target );
-    SDL_Delay( ( 1000 / CLIENT_RPS ) - time_diff );
-    //printf( "%i\n", ( 1000 / CLIENT_RPS ) - time_diff );
+    printf( "target: %i, delay: %i\n", time_target, MAX( 0, ( 1000 / CLIENT_RPS ) - time_diff ) );
+    SDL_Delay( MAX( 0, ( 1000 / CLIENT_RPS ) - time_diff ) );
 
   }
 

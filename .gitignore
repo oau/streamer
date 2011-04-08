@@ -1,8 +1,11 @@
 # General ignores
 *.o
+*.res
 /sam/bin/
 .dropbox
 /work/
+/bin/cli.rc
+/bin/srv.rc
 
 # Ignores for windows
 desktop.ini

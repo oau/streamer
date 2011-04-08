@@ -34,7 +34,9 @@ static void key_event( int event, int key, char ascii ) {
             memset( p_text + strlen( p_text ), 0, 255 - strlen( p_text ) );
             host->server_send( p_text, strlen( p_text ) );
             // Queue for local playback
-            host->speak_text( p_text );
+            if( p_text[ 0 ] != '/' ) {
+              host->speak_text( p_text );
+            }
           }
           //...
 
@@ -63,7 +65,7 @@ static void key_event( int event, int key, char ascii ) {
         host->text_cins( 2, host->text_rows - 2 );
       }
     } else if( key == SDLK_m ) {
-      host->server_send( "/mirror", 7 );
+      host->server_send( "/MIRROR", 7 );
     }
   }
 }
@@ -76,6 +78,14 @@ static void init() {
   host->help_add( "M: TOGGLE REAR-VIEW MIRROR" );
 }
 
+// Handles messages from server plugin
+static void message( void* data, unsigned char size ) {
+  char msg[ 256 ];
+  memcpy( msg, data, size );
+  msg[ size ] = 0;
+  host->draw_message( msg );
+}
+
 // Sets up the plugin descriptor
 pluginclient_t *kiwiray_open( pluginhost_t *p_host ) {
   memcpy( &kiwiray.ident, "KIWI", 4 );
@@ -83,5 +93,6 @@ pluginclient_t *kiwiray_open( pluginhost_t *p_host ) {
   kiwiray.init       = init;
   kiwiray.keyboard   = key_event;
   kiwiray.lost       = lost_hooks;
+  kiwiray.recv       = message;
   return( &kiwiray );
 }

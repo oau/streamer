@@ -64,9 +64,28 @@ int config_find_line( char **find_value, char *find_token, FILE *f ) {
 
 // Opens configuration file
 static FILE* config_open() {
-  FILE *cf;
+  FILE *cf, *df;
+  char temp[ 256 ] = "NULL";
   cf = fopen( config_rc, "r" );
-  if( cf == NULL ) printf( "Config [error]: Cannot open %s\n", config_rc );
+  if( cf == NULL ) {
+    if( strlen( config_rc ) >= 4 && strlen( config_rc ) <= 250 ) {
+      strcpy( temp, config_rc );
+      temp[ strlen( temp ) - 2 ] = 0;
+      strcat( temp, "default" );
+    }
+    printf( "Config [warning]: Cannot open %s, restoring %s\n", config_rc, temp );
+    df = fopen( temp, "r" );
+    if( df ) {
+      cf = fopen( config_rc, "w" );
+      if( cf ) {
+        while( !feof( df ) ) fwrite( temp, 1, fread( temp, 1, 256, df ), df );
+        fclose( cf );
+      }
+      fclose( df );
+    }
+    cf = fopen( config_rc, "r" );
+    if( cf == NULL ) printf( "Config [error]: Unable to restore default configuration\n" );
+  }
   return( cf );
 }
 

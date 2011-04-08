@@ -134,10 +134,12 @@ static void process_data( void* p_data, unsigned char size ) {
   data[ size ] = 0;
   if( data[ 0 ] == '/' ) {
     printf( "KiwiRay [info]: Command: %s\n", data );
-    if( strcmp( data, "/mirror" ) == 0 ) {
+    if( strcmp( data, "/MIRROR" ) == 0 ) {
       host->cap_enable( 1, 2 );
     } else {
-      host->client_send( "UNKNOWN COMMAND", 15 );
+      memmove( data + 17, data, size );
+      memcpy( data, "UNKNOWN COMMAND: ", 17 );
+      host->client_send( data, size + 17 );
     }
   } else {
     printf( "KiwiRay [info]: Speaking: %s\n", data );

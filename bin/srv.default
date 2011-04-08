@@ -12,6 +12,7 @@
 ## Timeouts (in frames, see fps)
 #timeout_connection  100  #before connection is closed if no data has arrived (100)
 #timeout_control    7500  #before control session is ended (7500)
+timeout_control       0
 #timeout_trust         8  #before retransmitting trusted packets (8)
 #timeout_glitch        2  #before robot stops moving if a connection glitches/is lost (2)
 

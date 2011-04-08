@@ -55,6 +55,8 @@ typedef struct {
   void ( *draw_box         )( unsigned char x, unsigned char y, unsigned char w, unsigned char h, SDL_Surface *s );
   // Draws wu-lines
   void ( *draw_wuline      )( int x0, int y0, int x1, int y1, uint32_t color );
+  // Draws message
+  void ( *draw_message     )( char *message );
   // Process a received packet
   void ( *comm_recv        )( char* data, int size );
   // Text propteries
