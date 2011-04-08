@@ -78,7 +78,7 @@ static FILE* config_open() {
     if( df ) {
       cf = fopen( config_rc, "w" );
       if( cf ) {
-        while( !feof( df ) ) fwrite( temp, 1, fread( temp, 1, 256, df ), df );
+        while( !feof( df ) ) fwrite( temp, 1, fread( temp, 1, 256, df ), cf );
         fclose( cf );
       }
       fclose( df );
