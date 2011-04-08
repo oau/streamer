@@ -1,6 +1,12 @@
 #include <stdio.h>
 #include "robocortex.h"
 #include "oswrap.h"
+#include <SDL/SDL_video.h>
+
+#define CAP_DISABLE 0
+#define CAP_ENABLE  1
+#define CAP_TOGGLE  2
+#define CAP_NOP     3
 
 typedef struct {
   // Requests a parameter from the configuration file
@@ -15,8 +21,10 @@ typedef struct {
   void     ( *speak_text   )( char *text );
   // Send a data packet to the client
   void     ( *client_send  )( void* data, unsigned char size );
-  // Enable/disable a capture device
-  void     ( *cap_enable   )( int device, int enable );
+  // Get capture device parameters
+  void     ( *cap_get      )( int device, int *w, int *h, int *enabled, SDL_Rect *src, SDL_Rect *dst );
+  // Set capture device parameters
+  void     ( *cap_set      )( int device, int enabled, SDL_Rect *src, SDL_Rect *dst );
   // Process a received packet
   void     ( *comm_recv    )( char* data, int size, remote_t *addr );
   // Valid in tick(), when client is connected only
@@ -29,6 +37,7 @@ typedef struct {
   uint8_t *stream_plane[ 3 ];
   int      stream_w;
   int      stream_h;
+  int      cap_count;
 } pluginhost_t;
 
 typedef struct {

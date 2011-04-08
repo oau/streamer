@@ -113,6 +113,7 @@ static           char  config_default[] = "srv.rc"; // Default configuration fil
 // Capture
 static      capture_t  cap[ CAP_SOURCES ];
 static            int  cap_count = -1;
+static      SDL_mutex *cap_mx;
 
 // Encoding
 static            int  stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
@@ -516,6 +517,13 @@ static void comm_recv( char *buffer, int size, remote_t *remote ) {
 
 /* == CAPTURE SCALING & CONVERSION ============================================================== */
 
+static void cap_context( int n ) {
+  SDL_mutexP( cap_mx );
+  if( cap[ n ].swsCtx ) sws_freeContext( cap[ n ].swsCtx );
+  cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_RGB24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
+  SDL_mutexV( cap_mx );
+}
+
 // Convert, crop, scale and blit all RGB24 capture sources onto YUV420P destination
 static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
   uint8_t* r_dst[ 3 ];
@@ -523,6 +531,7 @@ static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
   int src_stride;
   int n;
   for( n = 0; n < cap_count; n++ ) {
+    SDL_mutexP( cap_mx );
     if( cap[ n ].enable ) {
       src_stride = cap[ n ].w * 3;
       r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );
@@ -531,27 +540,57 @@ static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
       r_dst[ 2 ] = dst[ 2 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
       sws_scale( cap[ n ].swsCtx, &r_src, &src_stride, 0, cap[ n ].src.h, r_dst, dst_stride );
     }
+    SDL_mutexV( cap_mx );
   }
 }
 
 /* == PLUGIN SYSTEM ============================================================================= */
 
 // Plugin helpers
-static  int  plug_thread  ( void *pThread ) { return( ( ( int( * )() )pThread )() ); }
-static void* plug_thrstart( int( *pThread )() ) { return( SDL_CreateThread( plug_thread, ( void* )pThread ) ); }
-static void  plug_thrstop ( void* pHandle ) { SDL_KillThread( pHandle ); }
-static void  plug_thrdelay( int delay ) { SDL_Delay( delay ); }
-static void  plug_send    ( void* data, unsigned char size ) { trust_queue( plug->ident, data, size ); }
-static void  plug_cap     ( int dev, int enable ) {
-  if( dev < cap_count ) {
-    if( enable == 0 || enable == 1 ) {
-      cap[ dev ].enable = enable;
-    } else {
-      cap[ dev ].enable = !cap[ dev ].enable;
-    }
+static int plug_thread( void *pThread ) {
+  return( ( ( int( * )() )pThread )() );
+}
+
+static void* plug_thrstart( int( *pThread )() ) {
+  return( SDL_CreateThread( plug_thread, ( void* )pThread ) );
+}
+
+static void plug_thrstop( void* pHandle ) {
+  SDL_KillThread( pHandle );
+}
+
+static void plug_thrdelay( int delay ) {
+  SDL_Delay( delay );
+}
+
+static void plug_send( void* data, unsigned char size ) {
+  trust_queue( plug->ident, data, size );
+}
+
+static void plug_capget( int dev, int *w, int *h, int *e, SDL_Rect *src, SDL_Rect *dst ) {
+  *w = cap[ dev ].w;
+  *h = cap[ dev ].h;
+  SDL_mutexP( cap_mx );
+  *e = cap[ dev ].enable;
+  memcpy( src, &cap[ dev ].src, sizeof( SDL_Rect ) );
+  memcpy( dst, &cap[ dev ].dst, sizeof( SDL_Rect ) );
+  SDL_mutexV( cap_mx );
+}
+
+static void plug_capset( int dev, int e, SDL_Rect *src, SDL_Rect *dst ) {
+  cap[ dev ].enable = ( e == CAP_ENABLE ? 1 : ( e == CAP_DISABLE ? 0 : dev[ cap ].enable != ( e == CAP_TOGGLE ? 1 : 0 ) ) );
+  if( src || dst ) {
+    SDL_mutexP( cap_mx );
+    if( src ) memcpy( &cap[ dev ].src, src, sizeof( SDL_Rect ) );
+    if( dst ) memcpy( &cap[ dev ].dst, dst, sizeof( SDL_Rect ) );
+    cap_context( dev );
+    SDL_mutexV( cap_mx );
   }
 }
-static  int  plug_cfg     ( char* dst, char* req_token ) { return( config_plugin( plug->ident, dst, req_token ) ); }
+
+static int plug_cfg( char* dst, char* req_token ) {
+  return( config_plugin( plug->ident, dst, req_token ) );
+}
 
 static void load_plugins() {
   int pid;
@@ -561,7 +600,9 @@ static void load_plugins() {
   host.speak_text   = speech_queue;
   host.client_send  = plug_send;
   host.cfg_read     = plug_cfg;
-  host.cap_enable   = plug_cap;
+//  host.cap_enable   = plug_cap;
+  host.cap_set      = plug_capset;
+  host.cap_get      = plug_capget;
   host.comm_recv    = comm_recv;
   printf( "RoboCortex [info]: Loading plugins...\n" );
   // Load plugins
@@ -602,6 +643,7 @@ void picture_free() {
 }
 
 void mutex_free() {
+  SDL_DestroyMutex( cap_mx );
   SDL_DestroyMutex( trust_mx );
   SDL_DestroyMutex( client_mx );
   SDL_DestroyMutex( receive_mx );
@@ -658,6 +700,7 @@ int main( int argc, char *argv[] ) {
     printf( "RoboCortex [error]: No capture sources\n" );
     exit( EXIT_NOSOURCE );
   }
+  host.cap_count = cap_count;
   if( max_clients == 0 ) {
     max_clients = 1;
     direct = 1;
@@ -694,7 +737,7 @@ int main( int argc, char *argv[] ) {
   // Initialize scaling and conversion contexts
   atexit( sws_free );
   for( n = 0; n < cap_count; n++ ) {
-    cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_RGB24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
+    cap_context( n );
     if( cap[ n ].swsCtx == NULL ) {
       printf( "RoboCortex [error]: Unable to initialize conversion context\n" );
       exit( EXIT_SWSCALE );
@@ -769,6 +812,13 @@ int main( int argc, char *argv[] ) {
   host.stream_w = stream_w;
   host.stream_h = stream_h;
 
+  // Create mutexes
+  cap_mx = SDL_CreateMutex();
+  trust_mx = SDL_CreateMutex();
+  client_mx = SDL_CreateMutex();
+  receive_mx = SDL_CreateMutex();
+  atexit( mutex_free );
+
   // Load plugins
   load_plugins();
   atexit( unload_plugins );
@@ -780,12 +830,6 @@ int main( int argc, char *argv[] ) {
   speech_queue( "INITIALIZED AND READY FOR CONNECTION" );
 
   printf( "\nRoboCortex [info]: Initialized and ready for connection...\n" );
-
-  // Create mutexes
-  trust_mx = SDL_CreateMutex();
-  client_mx = SDL_CreateMutex();
-  receive_mx = SDL_CreateMutex();
-  atexit( mutex_free );
 
 #ifdef SAVE_STREAM
   sf = fopen( SAVE_STREAM, "wb" );

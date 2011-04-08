@@ -135,7 +135,7 @@ static void process_data( void* p_data, unsigned char size ) {
   if( data[ 0 ] == '/' ) {
     printf( "KiwiRay [info]: Command: %s\n", data );
     if( strcmp( data, "/MIRROR" ) == 0 ) {
-      host->cap_enable( 1, 2 );
+      host->cap_set( 1, CAP_TOGGLE, NULL, NULL );
     } else {
       memmove( data + 17, data, size );
       memcpy( data, "UNKNOWN COMMAND: ", 17 );
