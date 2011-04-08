@@ -12,7 +12,7 @@ static void lost_hooks() {
   host->text_crem();
   l_text = -1;
 }
-                                    
+
 // Handles keyboard events
 static void key_event( int event, int key, char ascii ) {
   if( event == E_KEYDOWN ) {
@@ -54,7 +54,7 @@ static void key_event( int event, int key, char ascii ) {
             host->text_cins( l_text + 2, host->text_rows - 2 );
           }
 
-      }      
+      }
     } else if( key == SDLK_t ) {
       if( host->keyboard_hook() ) {
         l_text = 0;
@@ -62,6 +62,8 @@ static void key_event( int event, int key, char ascii ) {
         host->text_write( 1, host->text_rows - 2, ">", FONT_GREEN );
         host->text_cins( 2, host->text_rows - 2 );
       }
+    } else if( key == SDLK_m ) {
+      host->server_send( "/mirror", 7 );
     }
   }
 }
@@ -69,7 +71,9 @@ static void key_event( int event, int key, char ascii ) {
 // Initializes hooks and help
 static void init() {
   host->key_bind( SDLK_t );
+  host->key_bind( SDLK_m );
   host->help_add( "T: OPEN SPEECH/COMMAND PROMPT" );
+  host->help_add( "M: TOGGLE REAR-VIEW MIRROR" );
 }
 
 // Sets up the plugin descriptor

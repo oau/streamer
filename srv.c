@@ -523,12 +523,14 @@ static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
   int src_stride;
   int n;
   for( n = 0; n < cap_count; n++ ) {
-    src_stride = cap[ n ].w * 3;
-    r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );
-    r_dst[ 0 ] = dst[ 0 ] + ( cap[ n ].dst.y * dst_stride[ 0 ] ) + cap[ n ].dst.x;
-    r_dst[ 1 ] = dst[ 1 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
-    r_dst[ 2 ] = dst[ 2 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
-    sws_scale( cap[ n ].swsCtx, &r_src, &src_stride, 0, cap[ n ].src.h, r_dst, dst_stride );
+    if( cap[ n ].enable ) {
+      src_stride = cap[ n ].w * 3;
+      r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );
+      r_dst[ 0 ] = dst[ 0 ] + ( cap[ n ].dst.y * dst_stride[ 0 ] ) + cap[ n ].dst.x;
+      r_dst[ 1 ] = dst[ 1 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
+      r_dst[ 2 ] = dst[ 2 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
+      sws_scale( cap[ n ].swsCtx, &r_src, &src_stride, 0, cap[ n ].src.h, r_dst, dst_stride );
+    }
   }
 }
 
@@ -540,7 +542,15 @@ static void* plug_thrstart( int( *pThread )() ) { return( SDL_CreateThread( plug
 static void  plug_thrstop ( void* pHandle ) { SDL_KillThread( pHandle ); }
 static void  plug_thrdelay( int delay ) { SDL_Delay( delay ); }
 static void  plug_send    ( void* data, unsigned char size ) { trust_queue( plug->ident, data, size ); }
-static void  plug_cap     ( int dev, int enable ) { if( dev < cap_count ) cap[ dev ].enable = enable; }
+static void  plug_cap     ( int dev, int enable ) {
+  if( dev < cap_count ) {
+    if( enable == 0 || enable == 1 ) {
+      cap[ dev ].enable = enable;
+    } else {
+      cap[ dev ].enable = !cap[ dev ].enable;
+    }
+  }
+}
 static  int  plug_cfg     ( char* dst, char* req_token ) { return( config_plugin( plug->ident, dst, req_token ) ); }
 
 static void load_plugins() {

@@ -110,7 +110,7 @@ static  unsigned char  trust_srv = 0xFF;                // Non-lossy transmissio
 static  unsigned char  trust_cli = 0x00;
 static      SDL_mutex *trust_mx;                        // Non-lossy buffer access mutex
 static            int  trust_timeout = 0;               // Non-lossy retransmission timeout
-static            int  b_cursor_grabbed;                // Is cursor currently "grabbed"?
+static            int  cursor_grabbed;                  // Cursor is grabbed
 static          Uint8  draw_red, draw_green, draw_blue; // Drawing color
 static  unsigned char  layout = KL_QWERTY;
 static         SDLKey  keymap[ KM_SIZE ];               // Keyboard remapping
@@ -359,8 +359,8 @@ static void draw_help( int draw ) {
 static void cursor_grab( int b_grab ) {
   SDL_GrabMode ret;
   ret = SDL_WM_GrabInput( b_grab ? SDL_GRAB_ON : SDL_GRAB_OFF );
-  b_cursor_grabbed = ( ret & SDL_GRAB_ON ) != 0;
-  SDL_ShowCursor( b_cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
+  cursor_grabbed = ( ret & SDL_GRAB_ON ) != 0;
+  SDL_ShowCursor( cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
 }
 
 // Poll cursor with warping support and grabbing detection
@@ -371,7 +371,7 @@ static void cursor_poll( long *ix, long *iy ) {
   int cx = 0, cy = 0;
   int warp = 0;
 
-  if( cursor_hook == NULL || !b_cursor_grabbed ) ready = 0;
+  if( cursor_hook != NULL || !cursor_grabbed ) ready = 0;
   SDL_GetMouseState( &cx, &cy );
   if( ready ) {
     *ix += cx - lx;
@@ -388,7 +388,7 @@ static void cursor_poll( long *ix, long *iy ) {
     }
     if( warp ) SDL_WarpMouse( cx, cy );
   }
-  if( b_cursor_grabbed ) ready = 1;
+  if( cursor_grabbed ) ready = 1;
   lx = cx; ly = cy;
 }
 
@@ -571,7 +571,7 @@ static int plug_csrhook( int show ) {
 static void plug_csrrelease() {
   if( cursor_hook == plug ) {
     cursor_hook = NULL;
-    SDL_ShowCursor( b_cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
+    SDL_ShowCursor( cursor_grabbed ? SDL_DISABLE : SDL_ENABLE );
   }
 }
 
@@ -774,7 +774,7 @@ int main( int argc, char *argv[] ) {
 
   time_target = SDL_GetTicks();
   while( !quit ) {
-
+    
     speech_poll();
     cursor_poll( &ctrl.ctrl.mx, &ctrl.ctrl.my );
 
@@ -1021,7 +1021,7 @@ int main( int argc, char *argv[] ) {
           if( cursor_hook == NULL ) {
             // Toggle cursor grabbing
             if( event.button.button == SDL_BUTTON_LEFT && !fullscreen ) {
-              cursor_grab( !b_cursor_grabbed );
+              cursor_grab( !cursor_grabbed );
             }
           } else if( state == STATE_STREAMING ) {
             plug = cursor_hook; // Notify plugin
@@ -1105,17 +1105,18 @@ int main( int argc, char *argv[] ) {
 
     // Delay 1/CLIENT_RPS seconds, constantly correct for processing overhead
     time_diff = SDL_GetTicks() - time_target;
-    if( time_diff > 1000 / CLIENT_RPS ) {
-      time_diff = 0;
-      time_target = SDL_GetTicks();
+    if( time_diff > 10000 / CLIENT_RPS ) {
       printf( "RoboCortex [warning]: Cannot keep up with desired RPS\n" );
-    }
-    if( time_diff < 0 ) {
+      time_target = SDL_GetTicks();
       time_diff = 0;
-      printf( "RoboCortex [error]: SDL_Delay returns too fast\n" );
+    }
+    if( time_diff > 1000 / CLIENT_RPS ) {
+      time_diff = 1000 / CLIENT_RPS;
     }
     time_target += 1000 / CLIENT_RPS;
+    //printf( "Next target %i\n", time_target );
     SDL_Delay( ( 1000 / CLIENT_RPS ) - time_diff );
+    //printf( "%i\n", ( 1000 / CLIENT_RPS ) - time_diff );
 
   }
 

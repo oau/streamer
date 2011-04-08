@@ -132,21 +132,30 @@ static void process_data( void* p_data, unsigned char size ) {
   char data[ 256 ];
   memcpy( data, p_data, size );
   data[ size ] = 0;
-  printf( "KiwiRay [info]: Speaking: %s\n", data );
-  for( n = 0; n < size - 1; n++ ) {
-    if( data[ n ] == ':' ) {
-      switch( data[ n + 1 ] ) {
-        case ')': emoticon = EMO_HAPPY;
-          break;
-        case '(': emoticon = EMO_ANGRY;
-          break;
-      }
-      if( emoticon > 1 ) emoticon_timeout = timeout_emoticon;
-      data[ n ] = ' ';
-      data[ n + 1 ] = ' ';
+  if( data[ 0 ] == '/' ) {
+    printf( "KiwiRay [info]: Command: %s\n", data );
+    if( strcmp( data, "/mirror" ) == 0 ) {
+      host->cap_enable( 1, 2 );
+    } else {
+      host->client_send( "UNKNOWN COMMAND", 15 );
     }
+  } else {
+    printf( "KiwiRay [info]: Speaking: %s\n", data );
+    for( n = 0; n < size - 1; n++ ) {
+      if( data[ n ] == ':' ) {
+        switch( data[ n + 1 ] ) {
+          case ')': emoticon = EMO_HAPPY;
+            break;
+          case '(': emoticon = EMO_ANGRY;
+            break;
+        }
+        if( emoticon > 1 ) emoticon_timeout = timeout_emoticon;
+        data[ n ] = ' ';
+        data[ n + 1 ] = ' ';
+      }
+    }
+    host->speak_text( data );
   }
-  host->speak_text( data );
 }
 
 // Tick: updates motion and timeouts
@@ -154,7 +163,7 @@ static void tick() {
 	int temp;
 
 	if( !connected ) return; // Important - host->ctrl/diff not valid!
-
+	
 	// Emoticon timeout
 	if( emoticon_timeout ) {
 	  if( --emoticon_timeout == 0 ) emoticon = EMO_CONNECTED;
