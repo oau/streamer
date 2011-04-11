@@ -89,7 +89,10 @@ extern "C" int capture_init( char *device, int fps, int *w, int *h ) {
     dev = atoi( device );
     // Initialize camera
     devs[ devs_count ].capture = cvCaptureFromCAM( dev );
-    if( !capture ) return( -1 );
+    if( !devs[devs_count].capture ) return( -1 );
+
+    cvSetCaptureProperty(devs[ devs_count ].capture, CV_CAP_PROP_FRAME_WIDTH, (double)*w);
+    cvSetCaptureProperty(devs[ devs_count ].capture, CV_CAP_PROP_FRAME_HEIGHT, (double)*h);
 
     IplImage* img = 0;
     img = cvQueryFrame( devs[ devs_count ].capture );

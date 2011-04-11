@@ -227,7 +227,7 @@ static void stop_moving() {
 }
 
 // Frees allocated resources
-static void close() {
+static void closer() {
   if( h_thread ) host->thread_stop( h_thread );
 }
 
@@ -255,7 +255,7 @@ pluginclient_t *kiwiray_open( pluginhost_t *p_host ) {
   memcpy( &kiwiray.ident, "KIWI", 4 );
   host = p_host;
   kiwiray.init       = init;
-  kiwiray.close      = close;
+  kiwiray.close      = closer;
   kiwiray.still      = stop_moving;
   kiwiray.tick       = tick;
   kiwiray.recv       = process_data;

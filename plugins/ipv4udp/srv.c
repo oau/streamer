@@ -67,7 +67,7 @@ static void init() {
 }
 
 // Frees allocated resources
-static void close() {
+static void closer() {
   if( h_thread ) host->thread_stop( h_thread );
 }
 
@@ -75,7 +75,7 @@ static void close() {
 pluginclient_t *ipv4udp_open( pluginhost_t *p_host ) {
   memcpy( &ipv4udp.ident, "UDP4", 4 );
   host = p_host;
-  ipv4udp.close      = close;
+  ipv4udp.close      = closer;
   ipv4udp.init       = init;
   ipv4udp.comm_send  = sender;
   return( &ipv4udp );

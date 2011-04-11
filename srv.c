@@ -729,7 +729,7 @@ int main( int argc, char *argv[] ) {
       exit( EXIT_CAPTURE );
     }
     if( cap_w != cap[ n ].w || cap_h != cap[ n ].h ) {
-      fprintf( stderr, "RoboCortex [error]: Capture device %s does not support %ix%i\n", cap[ n ].device, cap[ n ].w, cap[ n ].h );
+      fprintf( stderr, "RoboCortex [error]: Capture device %s does not support %ix%i (got %ix%i)\n", cap[ n ].device, cap[ n ].w, cap[ n ].h, cap_w, cap_h);
       exit( EXIT_CAPTURE );
     }
   }
