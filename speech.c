@@ -1,7 +1,6 @@
+#include <math.h>
 #include <SDL/SDL.h>
 #include "include/sam/sam.h"
-
-#define VIS_SIZE 1024
 
 struct sam_list_t {
 	char phenomes[ 256 ];
@@ -20,7 +19,8 @@ static int           sam_pos;
 static int           sam_speaking = 0;
 
 // Visualization
-static unsigned char vis_buffer[ VIS_SIZE ];
+static unsigned char vis_buffer[ 160 ];
+static unsigned char vis_mul[ 160 ];
 static int  do_vis = 0;
 static int ctr = 0;
 
@@ -49,30 +49,35 @@ static void sdl_mixer( void *unused, Uint8 *stream, int len ) {
 		if( do_vis ) {
 			f = stream[ 0 ];
 			dc = f;
-			vis_buffer[ 0 ] = ( char )( f - dc );
-		  if( len > VIS_SIZE ) len = VIS_SIZE;
+			vis_buffer[ 0 ] = ( ( ( int )( f - dc ) ) * vis_mul[ i ] ) >> 8;
+		  if( len > 160 ) len = 160;
 			for( i = 1; i < len; i++ ) {
-				f += ( ( ( float )stream[ i ] ) - f ) / 10;
+				f += ( ( ( float )stream[ i << 1 ] ) - f ) / 10;
 				dc += ( f - dc ) / 20;
-				vis_buffer[ i ] = ( char )( f - dc );
+				vis_buffer[ i ] = ( ( ( int )( f - dc ) ) * vis_mul[ i ] ) >> 8;
 			}
-			for( ; i < VIS_SIZE; i++ ) {
+			for( ; i < 160; i++ ) {
 				f += ( ( ( float )0 ) - f ) / 10;
 				dc += ( f - dc ) / 20;
-				vis_buffer[ i ] = ( char )( f - dc );
+				vis_buffer[ i ] = ( ( ( int )( f - dc ) ) * vis_mul[ i ] ) >> 8;
 			}
 		}
 	}
 }
 
 void speech_open() {
+  int n;
+  float m;
   SDL_AudioSpec fmt;
   fmt.freq     = 11025;
   fmt.format   = AUDIO_U8;
   fmt.channels = 1;
-  fmt.samples  = 22050/25;
+  fmt.samples  = 1024;
   fmt.callback = sdl_mixer;
   fmt.userdata = NULL;
+  for( n = 0; n < 160; n++ ) {
+    vis_mul[ n ] = ( unsigned char )( ( 1.0 - cos( ( ( float )n ) / 80.0 * 3.1415f ) ) * 127 );
+  }
   if ( SDL_OpenAudio( &fmt, NULL ) < 0 ) {
     fprintf( stderr, "SAM [error]: Unable to open SDL audio\n" );
   } else {
