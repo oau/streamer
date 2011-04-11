@@ -911,29 +911,24 @@ int main( int argc, char *argv[] ) {
         SDL_FillRect( screen, rect( &r, 0, 0, screen->w, screen->h ), 0 );
       }
 
-      // TODO: add resolution (width) support
       if( speech_vis( &p_vis ) == 0 ) {
-        for( temp = 0; temp < 636; temp += 4 ) {
+        for( temp = 0; temp < 160; temp++ ) {
+          int ksx = temp * screen_w / 160, kex = ( temp + 1 ) * screen_w / 160;
+          int ksy = p_vis[ temp ], key = p_vis[ temp == 159 ? 0 : temp + 1 ];
           draw_color( 0x00, 0x3F, 0x00 );
-          draw_wu( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 5, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
-          draw_wu( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 3, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
-          draw_wu( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 5, screen_h - 41 + ( p_vis[ temp + 4 ] ) );
-          draw_wu( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 3, screen_h - 39 + ( p_vis[ temp + 4 ] ) );
+          draw_wu( ksx + 1, screen_h - 39 + ksy, kex + 1, screen_h - 39 + key );
+          draw_wu( ksx - 1, screen_h - 41 + ksy, kex - 1, screen_h - 41 + key );
+          draw_wu( ksx + 1, screen_h - 41 + ksy, kex + 1, screen_h - 41 + key );
+          draw_wu( ksx - 1, screen_h - 39 + ksy, kex - 1, screen_h - 39 + key );
           draw_color( 0x00, 0x00, 0x00 );
-          draw_wu( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 6, screen_h - 38 + ( p_vis[ temp + 4 ] ) );
+          draw_wu( ksx + 2, screen_h - 38 + ksy, kex + 2, screen_h - 38 + key );
         }
-        draw_color( 0x00, 0x3F, 0x00 );
-        draw_wu( temp + 1, screen_h - 39 + p_vis[ temp ], temp + 4, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
-        draw_wu( temp - 1, screen_h - 41 + p_vis[ temp ], temp + 2, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
-        draw_wu( temp + 1, screen_h - 41 + p_vis[ temp ], temp + 4, screen_h - 41 + ( p_vis[ temp + 3 ] ) );
-        draw_wu( temp - 1, screen_h - 39 + p_vis[ temp ], temp + 2, screen_h - 39 + ( p_vis[ temp + 3 ] ) );
-        draw_color( 0x00, 0x00, 0x00 );
-        draw_wu( temp + 2, screen_h - 38 + p_vis[ temp ], temp + 5, screen_h - 38 + ( p_vis[ temp + 3 ] ) );
-        draw_color( 0x3F, 0xFF, 0x3F );
-        for( temp = 0; temp < 636; temp += 4 ) {
-          draw_wu( temp, screen_h - 40 + p_vis[ temp ], temp + 4, screen_h - 40 + ( p_vis[ temp + 4 ] ) );
+        draw_color( 0x2F, 0xDF, 0x2F );
+        for( temp = 0; temp < 160; temp++ ) {
+          int ksx = temp * screen_w / 160, kex = ( temp + 1 ) * screen_w / 160;
+          int ksy = p_vis[ temp ], key = p_vis[ temp == 159 ? 0 : temp + 1 ];
+          draw_wu( ksx, screen_h - 40 + ksy, kex, screen_h - 40 + key );
         }
-        draw_wu( temp, screen_h - 40 + p_vis[ temp ], temp + 3, screen_h - 40 + ( p_vis[ temp + 3 ] ) );
       }
 
     } else {
