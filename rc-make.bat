@@ -1,0 +1,9 @@
+@ECHO OFF
+cd sam
+call sam-make.bat
+cd ..
+cd plugins
+call plugins-make.bat
+cd ..
+call srv-make.bat
+call cli-make.bat
