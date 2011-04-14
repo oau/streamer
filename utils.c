@@ -99,12 +99,16 @@ int config_plugin( uint32_t i_ident, char* dst, char* req_token ) {
   FILE *cf;
   if( cf = config_open() ) {
     if( config_find_line( &p_ident, "plugin", cf ) ) {
-      while( config_read_line( &value, &token, cf ) ) {
-        if( strcmp( token, "plugin" ) == 0 ) break;
-        if( strcmp( token, req_token ) == 0 ) {
-          strcpy( dst, value );
-          ret = 1;
-          break;
+      if( req_token == NULL ) {
+        ret = 1;
+      } else {
+        while( config_read_line( &value, &token, cf ) ) {
+          if( strcmp( token, "plugin" ) == 0 ) break;
+          if( strcmp( token, req_token ) == 0 ) {
+            if( dst ) strcpy( dst, value );
+            ret = 1;
+            break;
+          }
         }
       }
     }

@@ -60,3 +60,6 @@ plugin             UDP4
 plugin             KIWI
 timeout_emoticon    100  #before emoticon is removed (100)
 commport           COM3  #communications port
+
+## Monitor-9 (9-camera surveilance)
+#plugin             MON9

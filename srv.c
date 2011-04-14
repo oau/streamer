@@ -12,6 +12,7 @@
 // Plugins
 #define MAX_PLUGINS           16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
+extern pluginclient_t *monitor_open( pluginhost_t* );
 extern pluginclient_t *ipv4udp_open( pluginhost_t* );
 
 // Save the stream
@@ -47,7 +48,8 @@ enum exitcode_e {
   EXIT_PICTURE,
   EXIT_AUDIO,
   EXIT_NOSOURCE,
-  EXIT_CONFIG
+  EXIT_CONFIG,
+  EXIT_MALLOC
 };
 
 // Client data
@@ -75,65 +77,69 @@ typedef struct {
   char               device[ CFG_VALUE_MAX_SIZE ];
   int                dev;
   int                w, h;
+  int                z;
   SDL_Rect           src, dst;
   uint8_t           *data;
   struct SwsContext *swsCtx;
 } capture_t;
 
 // Locals
-static            int  quit     = 0; // Time to quit (SIGINT etc.)
-static            int  do_intra = 0; // Time to intra-refresh (New client connected)
+static               int  quit     = 0; // Time to quit (SIGINT etc.)
+static               int  do_intra = 0; // Time to intra-refresh (New client connected)
 
 // Clients linked-list array
-static            int  max_clients = MAX_CLIENTS;
-static       client_t *clients;
-static       client_t *client_first = NULL;
-static       client_t *client_last  = NULL;
-static      SDL_mutex *client_mx;
-static            int  direct;
+static               int  max_clients = MAX_CLIENTS;
+static          client_t *clients;
+static          client_t *client_first = NULL;
+static          client_t *client_last  = NULL;
+static         SDL_mutex *client_mx;
+static               int  direct;
 
 // Trusted data linked_list & mutex
-static   linked_buf_t *trust_first = NULL;
-static   linked_buf_t *trust_last = NULL;
-static            int  trust_timeout;
-static      SDL_mutex *trust_mx;
+static      linked_buf_t *trust_first = NULL;
+static      linked_buf_t *trust_last = NULL;
+static               int  trust_timeout;
+static         SDL_mutex *trust_mx;
 
 // Packet types
-static           char  pkt_data[ 4 ] = "DATA";
-static           char  pkt_helo[ 4 ] = "HELO";
-static           char  pkt_time[ 4 ] = "TIME";
-static           char  pkt_ctrl[ 4 ] = "CTRL";
-static           char  pkt_lost[ 4 ] = "LOST";
-static           char  pkt_full[ 4 ] = "FULL";
-static           char  pkt_quit[ 4 ] = "QUIT";
+static              char  pkt_data[ 4 ] = "DATA";
+static              char  pkt_helo[ 4 ] = "HELO";
+static              char  pkt_time[ 4 ] = "TIME";
+static              char  pkt_ctrl[ 4 ] = "CTRL";
+static              char  pkt_lost[ 4 ] = "LOST";
+static              char  pkt_full[ 4 ] = "FULL";
+static              char  pkt_quit[ 4 ] = "QUIT";
 
 // Configuration
 static           char  config_default[] = "srv.rc"; // Default configuration file
 
 // Capture
-static      capture_t  cap[ CAP_SOURCES ];
-static            int  cap_count = -1;
-static      SDL_mutex *cap_mx;
+static         capture_t  cap[ CAP_SOURCES ];
+static               int  cap_count = -1;
+static         SDL_mutex *cap_mx;
 
-// Encoding
-static            int  stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
-static         x264_t *encoder;
-static x264_picture_t  pic_in, pic_out;
+// Encoding and conversion
+static               int  stream_w = STREAM_WIDTH, stream_h = STREAM_HEIGHT, fps = FPS;
+static               int  stream_stride;
+static            x264_t *encoder;
+static    x264_picture_t  pic_in, pic_out;
+static     unsigned char *pic_rgb24;
+static struct SwsContext *swsCtx;
 
 // Receive data mutex TODO: replace with buffering system and semaphore?
-static      SDL_mutex *receive_mx;
+static         SDL_mutex *receive_mx;
 
 // Timeouts
-static            int  timeout_connection = TIMEOUT_CONNECTION;
-static            int  timeout_control = TIMEOUT_CONTROL;
-static            int  timeout_trust = TIMEOUT_TRUST;
-static            int  timeout_glitch = TIMEOUT_GLITCH;
+static               int  timeout_connection = TIMEOUT_CONNECTION;
+static               int  timeout_control = TIMEOUT_CONTROL;
+static               int  timeout_trust = TIMEOUT_TRUST;
+static               int  timeout_glitch = TIMEOUT_GLITCH;
 
 // Plugins
-static   pluginhost_t  host;
-static pluginclient_t *plug;
-static pluginclient_t *plugs[ MAX_PLUGINS ];
-static            int  plugs_count;
+static      pluginhost_t  host;
+static    pluginclient_t *plug;
+static    pluginclient_t *plugs[ MAX_PLUGINS ];
+static               int  plugs_count;
 
 /* == TRUSTED COMMUNICATIONS ==================================================================== */
 
@@ -141,6 +147,7 @@ static            int  plugs_count;
 static void trust_queue( uint32_t ident, void* data, unsigned char size ) {
   linked_buf_t *p_trust;
   p_trust = malloc( sizeof( linked_buf_t ) );
+  // TODO: check
   if( p_trust ) {
     // Create packet
     memcpy( p_trust->data, &ident, 4 );
@@ -226,6 +233,7 @@ static int config_set( char *value, char *token ) {
       else {
         cap_count++;
         cap[ cap_count ].enable = 1;
+        cap[ cap_count ].z = cap_count;
         strcpy( cap[ cap_count ].device, value );
       }
     } else if( strcmp( token, "cap_w" ) == 0 ) {
@@ -296,6 +304,7 @@ static client_t *clients_add( remote_t *remote ) {
       if( memcmp( clients->remote.addr, remote->addr, remote->size ) == 0 ) {
         if( clients->remote.addr ) free( clients->remote.addr );
         clients->remote.addr = malloc( remote->size );
+        // TODO: check
         memcpy( clients->remote.addr, remote->addr, remote->size );
         clients->remote.size = remote->size;
         clients->remote.handler = remote->handler;
@@ -323,6 +332,7 @@ static client_t *clients_add( remote_t *remote ) {
         printf( "RoboCortex [info]: Client %i connected\n", n );
         if( clients[ n ].remote.addr ) free( clients[ n ].remote.addr );
         clients[ n ].remote.addr = malloc( remote->size );
+        // TODO: check
         memcpy( clients[ n ].remote.addr, remote->addr, remote->size );
         clients[ n ].remote.size = remote->size;
         clients[ n ].remote.handler = remote->handler;
@@ -520,27 +530,31 @@ static void comm_recv( char *buffer, int size, remote_t *remote ) {
 static void cap_context( int n ) {
   SDL_mutexP( cap_mx );
   if( cap[ n ].swsCtx ) sws_freeContext( cap[ n ].swsCtx );
-  cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_RGB24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_YUV420P, SWS_FAST_BILINEAR, NULL, NULL, NULL );
+  cap[ n ].swsCtx = sws_getContext( cap[ n ].src.w, cap[ n ].src.h, PIX_FMT_RGB24, cap[ n ].dst.w, cap[ n ].dst.h, PIX_FMT_RGB24, SWS_FAST_BILINEAR, NULL, NULL, NULL );
   SDL_mutexV( cap_mx );
 }
 
 // Convert, crop, scale and blit all RGB24 capture sources onto YUV420P destination
-static void cap_process( const int dst_stride[], uint8_t* const dst[]  ) {
-  uint8_t* r_dst[ 3 ];
+static void cap_process() {
+  uint8_t* r_dst;
   const uint8_t *r_src;
   int src_stride;
-  int n;
-  for( n = 0; n < cap_count; n++ ) {
-    SDL_mutexP( cap_mx );
-    if( cap[ n ].enable ) {
-      src_stride = cap[ n ].w * 3;
-      r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );
-      r_dst[ 0 ] = dst[ 0 ] + ( cap[ n ].dst.y * dst_stride[ 0 ] ) + cap[ n ].dst.x;
-      r_dst[ 1 ] = dst[ 1 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
-      r_dst[ 2 ] = dst[ 2 ] + ( ( cap[ n ].dst.y >> 1 ) * dst_stride[ 1 ] ) + ( cap[ n ].dst.x >> 1 );
-      sws_scale( cap[ n ].swsCtx, &r_src, &src_stride, 0, cap[ n ].src.h, r_dst, dst_stride );
+  int z, n;
+  memset( pic_rgb24, 0, stream_h * stream_stride );
+  for( z = 0; z < cap_count; z++ ) {
+    for( n = 0; n < cap_count; n++ ) {
+      if( cap[ n ].z == z ) {
+        SDL_mutexP( cap_mx );
+        if( cap[ n ].enable ) {
+          src_stride = cap[ n ].w * 3;
+          r_src = cap[ n ].data + ( src_stride * cap[ n ].src.y ) + ( cap[ n ].src.x * 3 );
+          r_dst = pic_rgb24 + ( cap[ n ].dst.y * stream_stride ) + cap[ n ].dst.x * 3;
+          sws_scale( cap[ n ].swsCtx, &r_src, &src_stride, 0, cap[ n ].src.h, &r_dst, &stream_stride );
+        }
+        SDL_mutexV( cap_mx );
+        break;
+      }
     }
-    SDL_mutexV( cap_mx );
   }
 }
 
@@ -578,13 +592,28 @@ static void plug_capget( int dev, int *w, int *h, int *e, SDL_Rect *src, SDL_Rec
 }
 
 static void plug_capset( int dev, int e, SDL_Rect *src, SDL_Rect *dst ) {
+  int changed = 0;
   cap[ dev ].enable = ( e == CAP_ENABLE ? 1 : ( e == CAP_DISABLE ? 0 : dev[ cap ].enable != ( e == CAP_TOGGLE ? 1 : 0 ) ) );
   if( src || dst ) {
     SDL_mutexP( cap_mx );
-    if( src ) memcpy( &cap[ dev ].src, src, sizeof( SDL_Rect ) );
-    if( dst ) memcpy( &cap[ dev ].dst, dst, sizeof( SDL_Rect ) );
-    cap_context( dev );
+    if( src ) if( memcmp( &cap[ dev ].src, src, sizeof( SDL_Rect ) ) != 0 ) changed = 1;
+    if( dst ) if( memcmp( &cap[ dev ].dst, dst, sizeof( SDL_Rect ) ) != 0 ) changed = 1;
+    if( changed ) {
+      if( src ) memcpy( &cap[ dev ].src, src, sizeof( SDL_Rect ) );
+      if( dst ) memcpy( &cap[ dev ].dst, dst, sizeof( SDL_Rect ) );
+      cap_context( dev );
+    }
     SDL_mutexV( cap_mx );
+  }
+}
+
+static void plug_capz( int dev, int z ) {
+  int n;
+  z = MIN( MAX( z, 0 ), cap_count - 1 );
+  if( cap[ dev ].z != z ) {
+    for( n = 0; n < cap_count; n++ ) if( n != dev && cap[ n ].z > cap[ dev ].z ) cap[ n ].z--;
+    for( n = 0; n < cap_count; n++ ) if( n != dev && cap[ n ].z >= z ) cap[ n ].z++;
+    cap[ dev ].z = z;
   }
 }
 
@@ -603,15 +632,22 @@ static void load_plugins() {
 //  host.cap_enable   = plug_cap;
   host.cap_set      = plug_capset;
   host.cap_get      = plug_capget;
+  host.cap_zorder   = plug_capz;
   host.comm_recv    = comm_recv;
   printf( "RoboCortex [info]: Loading plugins...\n" );
   // Load plugins
   plugs[ plugs_count++ ] = kiwiray_open( &host );
+  plugs[ plugs_count++ ] = monitor_open( &host );
   plugs[ plugs_count++ ] = ipv4udp_open( &host );
   printf( "RoboCortex [info]: Initializing plugins...\n" );
   // plugin->init
-  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
-    if( plug->init ) plug->init();
+  for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ ) {
+    if( config_plugin( plug->ident, NULL, NULL ) ) {
+      if( plug->init ) plug->init();
+    } else {
+      memset( plug, 0, sizeof( pluginclient_t ) );
+    }
+  }
   printf( "RoboCortex [info]: Plugins loaded and initialized\n" );
 }
 
@@ -638,8 +674,12 @@ void encoder_free() {
   x264_encoder_close( encoder );
 }
 
-void picture_free() {
+void i420_free() {
   x264_picture_clean( &pic_in );
+}
+
+void rgb24_free() {
+  free( pic_rgb24 );
 }
 
 void mutex_free() {
@@ -655,6 +695,10 @@ void sws_free() {
     if( cap[ n ].swsCtx != NULL ) sws_freeContext( cap[ n ].swsCtx );
     cap[ n ].swsCtx = NULL;
   }
+}
+
+void ctx_free() {
+  sws_freeContext( swsCtx );
 }
 
 void clients_free() {
@@ -709,6 +753,7 @@ int main( int argc, char *argv[] ) {
 
   // Allocate client memory
   clients = malloc( sizeof( client_t ) * max_clients );
+  // TODO: check
   memset( clients, 0, sizeof( client_t ) * max_clients );
   atexit( clients_free );
 
@@ -734,7 +779,7 @@ int main( int argc, char *argv[] ) {
     }
   }
 
-  // Initialize scaling and conversion contexts
+  // Initialize scaling contexts
   atexit( sws_free );
   for( n = 0; n < cap_count; n++ ) {
     cap_context( n );
@@ -800,22 +845,39 @@ int main( int argc, char *argv[] ) {
   encoder = x264_encoder_open( &param );
   atexit( encoder_free );
 
+  // Allocate RGB24 picture
+  stream_stride = stream_w * 3;
+  pic_rgb24 = malloc( stream_stride * stream_h );
+  // TODO: check & cleanup
+  if( pic_rgb24 ) {
+    atexit( rgb24_free );
+  } else {
+    exit( EXIT_MALLOC );
+  }
+  
   // Allocate I420 picture
   if( x264_picture_alloc( &pic_in, X264_CSP_I420, stream_w, stream_h ) == 0 ) {
-    atexit( picture_free );
+    atexit( i420_free );
   } else {
     exit( EXIT_PICTURE );
   }
 
-  memcpy( host.stream_stride, pic_in.img.i_stride, sizeof( int ) * 3 );
-  memcpy( host.stream_plane, pic_in.img.plane, sizeof( uint8_t* ) * 3 );
-  host.stream_w = stream_w;
-  host.stream_h = stream_h;
+  // Allocate conversion context 
+  swsCtx = sws_getContext( stream_w, stream_h, PIX_FMT_RGB24, stream_w, stream_h, PIX_FMT_YUV420P, SWS_POINT, NULL, NULL, NULL );
+  if( swsCtx ) {
+    atexit( ctx_free );
+  } else {
+    exit( EXIT_SWSCALE );
+  }
+
+  host.stream_rgb24 = pic_rgb24;
+  host.stream_w     = stream_w;
+  host.stream_h     = stream_h;
 
   // Create mutexes
-  cap_mx = SDL_CreateMutex();
-  trust_mx = SDL_CreateMutex();
-  client_mx = SDL_CreateMutex();
+  cap_mx     = SDL_CreateMutex();
+  trust_mx   = SDL_CreateMutex();
+  client_mx  = SDL_CreateMutex();
   receive_mx = SDL_CreateMutex();
   atexit( mutex_free );
 
@@ -849,7 +911,7 @@ int main( int argc, char *argv[] ) {
         if( plug->capture ) plug->capture( n, cap[ n ].w, cap[ n ].h, cap[ n ].data );
     }
 
-		// Scaling and coding as explained by http://stackoverflow.com/questions/2940671/how-to-encode-series-of-images-into-h264-using-x264-api-c-c
+		// Process and scale sources
 		cap_process( pic_in.img.i_stride, pic_in.img.plane );
 
     // Have client?
@@ -870,6 +932,9 @@ int main( int argc, char *argv[] ) {
     // plugin->tick
     for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ )
       if( plug->tick ) plug->tick();
+
+		// Convert to I420, as explained by http://stackoverflow.com/questions/2940671/how-to-encode-series-of-images-into-h264-using-x264-api-c-c
+    sws_scale( swsCtx, ( const uint8_t* const* )&pic_rgb24, &stream_stride, 0, stream_h, pic_in.img.plane, pic_in.img.i_stride );
 
     // Encode frame
     if( do_intra ) {

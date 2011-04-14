@@ -25,6 +25,8 @@ typedef struct {
   void     ( *cap_get      )( int device, int *w, int *h, int *enabled, SDL_Rect *src, SDL_Rect *dst );
   // Set capture device parameters
   void     ( *cap_set      )( int device, int enabled, SDL_Rect *src, SDL_Rect *dst );
+  // Set capture device z-order
+  void     ( *cap_zorder   )( int device, int z );
   // Process a received packet
   void     ( *comm_recv    )( char* data, int size, remote_t *addr );
   // Valid in tick(), when client is connected only
@@ -32,9 +34,8 @@ typedef struct {
   ctrl_t  *ctrl; // Current values
   ctrl_t  *diff; // Difference since last call
   // Valid in tick() only
-  // Contains final YUV420P image information for analysis/modification
-  int      stream_stride[ 3 ];
-  uint8_t *stream_plane[ 3 ];
+  // Contains final RGB24 composition for analysis/modification
+  uint8_t *stream_rgb24;
   int      stream_w;
   int      stream_h;
   int      cap_count;
@@ -56,7 +57,7 @@ typedef struct {
   void ( *capture    )( int device, int w, int h, uint8_t *data );
   // Called each frame
   // Control/steering information should be processed here
-  // Final YUV420P image may be analysed and/or modified here
+  // Final RGB24 image may be analysed and/or modified here
   void ( *tick       )();
   // Called when a data packet is received from the client
   void ( *recv       )( void *data, unsigned char size );

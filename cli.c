@@ -12,6 +12,7 @@
 // Plugins
 #define MAX_PLUGINS           16
 extern pluginclient_t *kiwiray_open( pluginhost_t* );
+extern pluginclient_t *monitor_open( pluginhost_t* );
 extern pluginclient_t *ipv4udp_open( pluginhost_t* );
 
 // Protocol
@@ -644,11 +645,16 @@ static void load_plugins() {
   printf( "RoboCortex [info]: Loading plugins...\n" );
   // Load plugins
   plugs[ plugs_count++ ] = kiwiray_open( &host );
+  plugs[ plugs_count++ ] = monitor_open( &host );
   plugs[ plugs_count++ ] = ipv4udp_open( &host );
   printf( "RoboCortex [info]: Initializing plugins...\n" );
   // plugin->init
   for( pid = 0; pid < MAX_PLUGINS && ( plug = plugs[ pid ] ) != NULL; pid++ ) {
-    if( plug->init ) plug->init();
+    if( config_plugin( plug->ident, NULL, NULL ) ) {
+      if( plug->init ) plug->init();
+    } else {
+      memset( plug, 0, sizeof( pluginclient_t ) );
+    }
     if( plug->comm_send ) {
       if( comm_send ) printf( "RoboCortex [error]: Multiple communications plugins loaded\n" );
       comm_send = plug->comm_send;
@@ -1104,14 +1110,14 @@ int main( int argc, char *argv[] ) {
 
     // Delay 1/CLIENT_RPS seconds, constantly correct for processing overhead
     time_diff = SDL_GetTicks() - time_target;
-    printf( "decode: %i, time: %i, diff: %i, ", do_decode, SDL_GetTicks(), time_diff );
+    //printf( "decode: %i, time: %i, diff: %i, ", do_decode, SDL_GetTicks(), time_diff );
     if( time_diff > 1000 ) {
-      printf( "RoboCortex [warning]: Cannot keep up with desired RPS\n" );
+      printf( "RoboCortex [warning]: Cannot keep up with the desired RPS\n" );
       time_target = SDL_GetTicks();
       time_diff = ( 1000 / CLIENT_RPS );
     }
     time_target += 1000 / CLIENT_RPS;
-    printf( "target: %i, delay: %i\n", time_target, MAX( 0, ( 1000 / CLIENT_RPS ) - time_diff ) );
+    //printf( "target: %i, delay: %i\n", time_target, MAX( 0, ( 1000 / CLIENT_RPS ) - time_diff ) );
     SDL_Delay( MAX( 0, ( 1000 / CLIENT_RPS ) - time_diff ) );
 
   }
